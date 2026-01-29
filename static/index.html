@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Анализатор Книг Pro</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; background: #f4f7f6; }
+        .container { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        #progressContainer { display: none; margin: 20px 0; }
+        .progress-bar { width: 100%; background: #eee; border-radius: 10px; height: 20px; overflow: hidden; }
+        .progress-fill { width: 0%; height: 100%; background: #28a745; transition: width 0.3s; }
+        textarea { width: 100%; height: 400px; margin-top: 20px; border: 1px solid #ddd; border-radius: 4px; padding: 10px; font-family: monospace; }
+        .controls { display: flex; gap: 10px; align-items: center; margin-bottom: 20px; }
+        button { padding: 10px 25px; background: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer; }
+        button:disabled { background: #ccc; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Анализ Технической Литературы</h1>
+
+        <div class="controls">
+            <input type="file" id="fileInput" accept=".docx, .pdf">
+            <label><input type="checkbox" id="neuralMode"> Нейросеть (Qwen 2.5)</label>
+            <button id="startBtn" onclick="processFile()">Запустить анализ</button>
+        </div>
+
+        <div id="progressContainer">
+            <div id="statusText">Подготовка...</div>
+            <div class="progress-bar"><div id="progressFill" class="progress-fill"></div></div>
+        </div>
+
+        <textarea id="resultArea" placeholder="XML результат появится здесь..."></textarea>
+    </div>
+
+    <script>
+        async function processFile() {
+    const fileInput = document.getElementById('fileInput');
+    const isNeural = document.getElementById('neuralMode').checked;
+    const file = fileInput.files[0];
+    if (!file) return alert("Выберите файл");
+
+    const btn = document.getElementById('startBtn');
+    const resultArea = document.getElementById('resultArea');
+    const progressContainer = document.getElementById('progressContainer');
+    const progressFill = document.getElementById('progressFill');
+    const statusText = document.getElementById('statusText');
+
+    btn.disabled = true;
+    resultArea.value = "Загрузка файла...";
+
+    try {
+        // ШАГ 1: Загружаем файл
+        const formData = new FormData();
+        formData.append('file', file);
+        const uploadRes = await fetch('/upload', { method: 'POST', body: formData });
+        const { filename } = await uploadRes.json();
+
+        if (!isNeural) {
+            // ШАГ 2а: Быстрый режим
+            statusText.innerText = "Обработка алгоритмом...";
+            const res = await fetch(`/analyze/fast?filename=${encodeURIComponent(filename)}`, { method: 'POST' });
+            resultArea.value = await res.text();
+            btn.disabled = false;
+        } else {
+            // ШАГ 2б: WebSocket режим
+            progressContainer.style.display = 'block';
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const ws = new WebSocket(`${protocol}//${window.location.host}/ws/analyze`);
+
+            ws.onopen = () => {
+                ws.send(JSON.stringify({ filename: filename }));
+            };
+
+            ws.onmessage = (e) => {
+                const data = JSON.parse(e.data);
+                if (data.type === 'progress') {
+                    progressFill.style.width = data.percent + '%';
+                    statusText.innerText = `${data.percent}% - ${data.message}`;
+                } else if (data.type === 'complete') {
+                    resultArea.value = data.xml;
+                    statusText.innerText = "Готово!";
+                    btn.disabled = false;
+                    ws.close();
+                } else if (data.type === 'error') {
+                    alert("Ошибка: " + data.message);
+                    btn.disabled = false;
+                }
+            };
+
+            ws.onerror = (err) => {
+                console.error("WS Error:", err);
+                alert("Ошибка подключения к WebSocket. Убедитесь, что установлены библиотеки websockets.");
+                btn.disabled = false;
+            };
+        }
+    } catch (err) {
+        alert("Ошибка: " + err.message);
+        btn.disabled = false;
+    }
+}
+    </script>
+</body>
+</html>

@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+
+# Временные файлы проекта
+temp_*
+ws_temp_*
+*.log
+
+# IDE
+.vscode/
+.idea/
+.DS_Store
+
+# Окружение
+.env
