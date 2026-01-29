@@ -21,7 +21,7 @@
 ### 1. Клонирование репозитория
 ```bash
 git init
-git clone <ссылка_на_ваш_репозиторий>
+git clone https://github.com/GNAVA4/book-analyzer.git
 cd book-analyzer
 ```
 ### 2. Настройка виртуального окружения
