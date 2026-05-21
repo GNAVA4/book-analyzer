@@ -32,6 +32,78 @@ def find_toc_boundary(full_text, sequence):
     return last_toc_pos if last_toc_pos > 0 else 3000
 
 
+def _search_with_confidence(full_text, full_title, clean_title, current_pos, start_pos):
+    """Пробует стратегии поиска от точных к нечётким. Возвращает dict с confidence или None."""
+
+    # --- Стратегия 1: точное совпадение полного заголовка ---
+    for title in [full_title, clean_title]:
+        idx = full_text.find(title, current_pos)
+        if idx == -1:
+            idx = full_text.find(title, start_pos)
+        if idx != -1:
+            return {
+                'start': idx,
+                'end': idx + len(title),
+                'confidence': 1.0,
+                'strategy': 'exact'
+            }
+
+    # --- Стратегия 2: tokenized regex (текущий алгоритм) ---
+    for title in [full_title, clean_title]:
+        tokens = re.findall(r'[a-zA-Zа-яА-Я0-9§]+', title)
+        if len(tokens) < 2:
+            continue
+        pattern_str = r'[\s\W]*?'.join([re.escape(t) for t in tokens])
+        pattern = re.compile(pattern_str, re.IGNORECASE | re.DOTALL)
+        match = pattern.search(full_text, current_pos)
+        if not match:
+            match = pattern.search(full_text, start_pos)
+        if match:
+            return {
+                'start': match.start(),
+                'end': match.end(),
+                'confidence': 0.85,
+                'strategy': 'tokenized_regex'
+            }
+
+    # --- Стратегия 3: первые N значимых слов (>=4) ---
+    words = re.findall(r'[a-zA-Zа-яА-Я]{3,}', clean_title)
+    if len(words) >= 4:
+        partial_tokens = words[:4]
+        pattern_str = r'[\s\W]{0,15}'.join([re.escape(w) for w in partial_tokens])
+        pattern = re.compile(pattern_str, re.IGNORECASE | re.DOTALL)
+        match = pattern.search(full_text, current_pos)
+        if not match:
+            match = pattern.search(full_text, start_pos)
+        if match:
+            return {
+                'start': match.start(),
+                'end': match.end(),
+                'confidence': 0.6,
+                'strategy': 'partial_words'
+            }
+
+    # --- Стратегия 4: числовой префикс + первое слово ---
+    num_prefix = re.match(r'^(\d+(?:\.\d+)*\.?)\s+(\w+)', clean_title)
+    if num_prefix:
+        pattern = re.compile(
+            re.escape(num_prefix.group(1)) + r'[\s\W]{0,5}' + re.escape(num_prefix.group(2)),
+            re.IGNORECASE
+        )
+        match = pattern.search(full_text, current_pos)
+        if not match:
+            match = pattern.search(full_text, start_pos)
+        if match:
+            return {
+                'start': match.start(),
+                'end': match.end(),
+                'confidence': 0.4,
+                'strategy': 'num_prefix'
+            }
+
+    return None
+
+
 def find_real_indices(full_text, sequence):
     start_pos = find_toc_boundary(full_text, sequence)
     indices_map = []
@@ -39,30 +111,52 @@ def find_real_indices(full_text, sequence):
 
     for item in sequence:
         full_title = item['title'].strip()
-        if not full_title: continue
+        if not full_title:
+            continue
         clean_title = get_clean_title(full_title)
 
-        search_variants = [full_title, clean_title]
-        found_match = None
-        for title_to_search in search_variants:
-            tokens = re.findall(r'[a-zA-Zа-яА-Я0-9§]+', title_to_search)
-            if not tokens: continue
-            pattern_str = r"[\s\W]*?".join([re.escape(t) for t in tokens])
-            pattern = re.compile(pattern_str, re.IGNORECASE | re.DOTALL)
+        result = _search_with_confidence(full_text, full_title, clean_title, current_pos, start_pos)
 
-            match = pattern.search(full_text, current_pos)
-            if not match: match = pattern.search(full_text, start_pos)
+        if result:
+            indices_map.append({
+                "item": item,
+                "start_idx": result['start'],
+                "end_idx": result['end'],
+                "confidence": result['confidence'],
+                "strategy": result['strategy']
+            })
+            current_pos = result['end']
+        else:
+            indices_map.append({
+                "item": item,
+                "start_idx": -1,
+                "end_idx": -1,
+                "confidence": 0.0,
+                "strategy": "not_found"
+            })
 
-            if match:
-                found_match = match
+    # Сохраняем исходный порядок из sequence — сортировка по start_idx ломает иерархию
+    found = {m['item']['title']: m for m in indices_map if m['start_idx'] != -1}
+    not_found = [m for m in indices_map if m['start_idx'] == -1]
+
+    ordered = []
+    for seq_item in sequence:
+        title = seq_item['title'].strip()
+        if title in found:
+            ordered.append(found[title])
+
+    # Не найденные вставляем по номеру страницы (fallback)
+    for nf in not_found:
+        page = nf['item'].get('page') or 9999
+        insert_at = len(ordered)
+        for i, o in enumerate(ordered):
+            op = o.get('item', {}).get('page') or 0
+            if op > page:
+                insert_at = i
                 break
+        ordered.insert(insert_at, nf)
 
-        if found_match:
-            indices_map.append({"item": item, "start_idx": found_match.start(), "end_idx": found_match.end()})
-            current_pos = found_match.end()
-
-    indices_map.sort(key=lambda x: x['start_idx'])
-    return indices_map
+    return ordered
 
 
 def clean_footer_header(full_text):

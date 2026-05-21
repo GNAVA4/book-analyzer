@@ -19,7 +19,9 @@ def build_tree_structure(flat_nodes: list) -> dict:
             "content": clean_xml_string(node.get('content', '')),
             "children": [],
             "level": node.get('level', 1),
-            "page": node.get('page', 0) if node.get('page') else 0
+            "page": node.get('page', 0) if node.get('page') else 0,
+            "confidence": node.get('confidence', 1.0),
+            "strategy": node.get('strategy', '')
         }
         while len(stack) > 1 and stack[-1]['level'] >= new_node['level']:
             stack.pop()
@@ -28,11 +30,20 @@ def build_tree_structure(flat_nodes: list) -> dict:
     return root
 
 
-def dict_to_xml(data: dict, toc_items: list = None) -> str:
+def dict_to_xml(data: dict, toc_items: list = None, metadata: dict = None) -> str:
     def create_element(node):
         p = str(node.get('page', ''))
         if p == "0" or p == "None": p = ""
-        elem = ET.Element("section", title=node.get('title', ''), page=p)
+        
+        conf = node.get('confidence', 1.0)
+        conf_str = f"{conf:.2f}"
+        
+        strategy = node.get('strategy', '')
+        attrs = {'title': node.get('title', ''), 'page': p, 'confidence': conf_str}
+        if strategy:
+            attrs['parsing_strategy'] = strategy
+            
+        elem = ET.Element("section", **attrs)
         if node.get('content') and node['content'].strip():
             content_elem = ET.SubElement(elem, "content")
             content_elem.text = node['content']
@@ -41,6 +52,20 @@ def dict_to_xml(data: dict, toc_items: list = None) -> str:
         return elem
 
     root_elem = ET.Element("Book")
+    
+    # Metadata секция
+    if metadata:
+        meta_elem = ET.SubElement(root_elem, "Metadata")
+        toc_conf = str(metadata.get('toc_confidence', 0))
+        llm_ref = str(metadata.get('llm_refinements', 0))
+        low_conf = str(metadata.get('low_confidence_count', 0))
+        total_ch = str(metadata.get('total_chapters', 0))
+        
+        ET.SubElement(meta_elem, "ToCConfidence").text = toc_conf
+        ET.SubElement(meta_elem, "LLMRefinements").text = llm_ref
+        ET.SubElement(meta_elem, "LowConfidenceCount").text = low_conf
+        ET.SubElement(meta_elem, "TotalChapters").text = total_ch
+
     if toc_items:
         nav = ET.SubElement(root_elem, "NavigationTable")
         for item in toc_items:

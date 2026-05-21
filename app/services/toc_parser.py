@@ -81,7 +81,7 @@ class HeuristicParser:
             match_loose = self.loose_item_pattern.match(line_raw)
             has_page = bool(match_strict or match_start or match_loose)
 
-            if not has_page and self._is_content_start(norm_line, seen_titles):
+            if self._is_content_start(line_raw, norm_line, has_page, seen_titles):
                 break
 
             if len(line_raw) < 50 and any(m in norm_line for m in self.header_markers):
@@ -101,6 +101,10 @@ class HeuristicParser:
                     page_part, title_part = match_start.group(1), match_start.group(2).strip()
                 else:
                     title_part, page_part = match_loose.group(1).strip(), match_loose.group(3)
+
+                # Если title_part слишком длинный — это скорее всего текст из книги, а не заголовок ToC
+                if len(title_part) > 80:
+                    break
 
                 if pending_title:
                     if not self.structure_start.match(title_part):
@@ -202,12 +206,78 @@ class HeuristicParser:
     def _normalize(self, text):
         return re.sub(r'[\W_]+', '', text).lower()
 
-    def _is_content_start(self, norm_line, seen_titles):
-        if len(norm_line) < 10: return False
+    def _is_terminal_section(self, norm_line):
+        """Проверяет что строка относится к терминальному разделу (конец книги)."""
+        terminal_patterns = [
+            r'^алфавитный\s+указатель',
+            r'^предметный\s+указатель', 
+            r'^список\s+литературы',
+            r'^библиография',
+            r'^приложения?\s*$',
+            r'^примечания?\s*$',
+            r'^об\s+авторе',
+            r'^references\b',
+        ]
+        return any(re.search(p, norm_line) for p in terminal_patterns)
+
+    def _is_content_start(self, line_raw, norm_line, has_page, seen_titles):
+        """Определяет конец оглавления по взвешенному голосованию сигналов."""
+        if len(norm_line) < 10:
+            return False
+
+        score = 0.0
+
+        # Сигнал A: нет паттерна номера страницы + длинная строка (>100 символов)
+        if not has_page and len(line_raw) > 100:
+            score += 0.4
+
+        # Сигнал B: строка относится к терминальному разделу
+        if self._is_terminal_section(norm_line):
+            score += 0.3
+
+        # Сигнал C: повтор заголовка из ToC без разделителей (точки/табы)
         for s in seen_titles:
             if len(s) > 10 and norm_line.startswith(s):
-                return True
-        return False
+                # Проверяем что это НЕ строка оглавления (нет точек-лидеров, табуляций)
+                if not re.search(r'\.{2,}', line_raw) and '\t' not in line_raw:
+                    score += 0.3
+                    break
+
+        return score > 0.5
+
+    async def extract_toc_via_llm(self, first_n_pages_text: str) -> list:
+        """Если алгоритм не нашёл ToC — используем LLM для извлечения структуры."""
+        from .llm_engine import llm_client
+        
+        prompt = f"""Ты — парсер структуры документа.
+
+Вот текст первых 30 страниц книги:
+---
+{first_n_pages_text}
+---
+
+Найди оглавление и верни ТОЛЬКО JSON без комментариев:
+{{"items": [
+  {{"title": "Название раздела", "page": номер_страницы, "level": уровень_вложенности}},
+  ...
+]}}
+
+Если оглавления нет — верни {{"items": []}}.
+Уровни: глава/часть/раздел = 1, подраздел = 2.
+"""
+        try:
+            response = await llm_client.client.chat.completions.create(
+                model=llm_client.model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+                max_tokens=4096,
+                response_format={"type": "json_object"}
+            )
+            data = __import__('json').loads(response.choices[0].message.content)
+            return data.get("items", [])
+        except Exception as e:
+            print(f"LLM ToC fallback Error: {e}")
+            return []
 
 
 # ЭТА ФУНКЦИЯ ДОЛЖНА БЫТЬ ЗДЕСЬ (ДЛЯ ИСПРАВЛЕНИЯ IMPORT ERROR)
@@ -222,4 +292,6 @@ def toc_to_linear_sequence(node: TocNode) -> list:
     for i in range(len(sequence)):
         if sequence[i]['page'] is None and i + 1 < len(sequence):
             sequence[i]['page'] = sequence[i + 1]['page']
-    return sequence
+    
+    # Фильтруем мусор: пункты длиннее 80 символов — это текст из книги, а не заголовки ToC
+    return [s for s in sequence if len(s['title']) <= 80]
