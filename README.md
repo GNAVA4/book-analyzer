@@ -12,7 +12,7 @@
 - **Backend**: Python 3.11, FastAPI, Uvicorn
 - **PDF Engine**: PyMuPDF (fitz)
 - **DOCX Engine**: python-docx, lxml
-- **AI Engine**: Ollama (модель Qwen 2.5)
+- **AI Engine**: LM Studio или Ollama (OpenAI-совместимый API)
 
 ---
 
@@ -34,15 +34,23 @@ source venv/bin/activate
 
 pip install -r requirements.txt
 ```
-### 2. Настройка Ollama
-Для работы функции "Нейросеть (Qwen 2.5)" необходимо установить локальный сервер LLM:
+### 2. Настройка локальной LLM
+Для нейросетевого режима нужен локальный сервер с OpenAI-совместимым API. Поддерживаются **LM Studio** (по умолчанию) и **Ollama**.
 
-1.  Скачайте и установите **Ollama** с официального сайта [ollama.com](https://ollama.com/).
-2.  Запустите приложение Ollama.
-3.  Откройте терминал и скачайте модель командой:
-```bash
-ollama run qwen2.5:7b
-```
+#### Вариант А: LM Studio (по умолчанию в коде)
+1. Скачайте [LM Studio](https://lmstudio.ai/), запустите Local Server (порт `1234`).
+2. **Важно: выбирайте non-reasoning модели.** Reasoning-модели (Qwen3-thinking, DeepSeek-R1, GLM-4-thinking) тратят всё `max_tokens` на «размышления» и возвращают пустой `content` — парсер работает с ними через fallback на `reasoning_content`, но это медленно и менее предсказуемо.
+3. Рекомендуемые модели (в порядке предпочтения):
+   - `qwen2.5-7b-instruct` — быстро, надёжно
+   - `qwen2.5-14b-instruct` — медленнее, точнее
+   - `mistral-7b-instruct-v0.3` — англоязычный fallback
+4. Установите имя модели в `app/services/llm_engine.py` (константа `LLM_MODEL`) — должно совпадать с `id` модели из `GET /v1/models`.
+
+#### Вариант Б: Ollama
+1. Установите [Ollama](https://ollama.com/) и запустите `ollama run qwen2.5:7b`.
+2. В `app/services/llm_engine.py` поменяйте `base_url='http://127.0.0.1:1234/v1'` на `'http://127.0.0.1:11434/v1'` и `LLM_MODEL = "qwen2.5:7b"`.
+
+> Алгоритмический режим (`POST /analyze/fast`) работает **без** LLM. Нейросеть подключается только для разделов с низкой уверенностью маппинга (`confidence < 0.80`).
 ### 3. Запуск сервиса
 Запустите сервер с помощью Uvicorn:
 ```bash

@@ -69,8 +69,13 @@ class HeuristicParser:
                         self._add_node(root, current_chapter, line_raw, 1, None)
                         seen_titles.add(self._normalize(line_raw))
                     continue
-                if self.item_pattern.match(line_raw) or self.item_pattern_start.match(
-                        line_raw) or self.structure_start.match(line_raw):
+                # Без явного маркера «оглавление/contents» стартуем ToC только при
+                # надёжных паттернах (с лидерами точек или короткий «N Название»).
+                # Голый structure_start не запускает ToC — иначе FOREWORD-параграфы
+                # вида «1. This standard...» ловятся как пункты содержания.
+                if self.item_pattern.match(line_raw):
+                    toc_started = True
+                elif self.item_pattern_start.match(line_raw) and len(line_raw) < 100:
                     toc_started = True
                 else:
                     continue
@@ -87,7 +92,8 @@ class HeuristicParser:
             if len(line_raw) < 50 and any(m in norm_line for m in self.header_markers):
                 continue
 
-            if len(line_raw) > 300:
+            # Длинные строки без page-маркеров — почти наверняка параграф, не пункт ToC
+            if len(line_raw) > 200 and not has_page:
                 pending_title = ""
                 misses += 1
                 if misses > MAX_MISSES: break
@@ -104,9 +110,13 @@ class HeuristicParser:
 
                 if pending_title:
                     if not self.structure_start.match(title_part):
+                        # Пересчитываем level от ПОЛНОГО заголовка, а не от обрывка
+                        # «3.» / «1.» которые без названия неверно классифицируются.
                         full_title = pending_title + " " + title_part
-                        self._add_node(root, current_chapter, full_title, pending_level, page_part)
-                        if pending_level == 1 and root.children: current_chapter = root.children[-1]
+                        full_level = self._guess_level(full_title)
+                        if not current_chapter: full_level = 1
+                        self._add_node(root, current_chapter, full_title, full_level, page_part)
+                        if full_level == 1 and root.children: current_chapter = root.children[-1]
                         seen_titles.add(self._normalize(full_title))
                         pending_title = ""
                         misses = 0
@@ -150,12 +160,17 @@ class HeuristicParser:
             # --- СЦЕНАРИЙ В: ТЕКСТ (ХВОСТ) ---
             if pending_title:
                 if re.match(r'^\d+$', line_raw):
-                    self._add_node(root, current_chapter, pending_title, pending_level, line_raw)
-                    if pending_level == 1 and root.children: current_chapter = root.children[-1]
+                    # Финальный заголовок — пересчитать level от полного текста
+                    final_level = self._guess_level(pending_title)
+                    if not current_chapter: final_level = 1
+                    self._add_node(root, current_chapter, pending_title, final_level, line_raw)
+                    if final_level == 1 and root.children: current_chapter = root.children[-1]
                     seen_titles.add(self._normalize(pending_title))
                     pending_title = ""
                 elif len(pending_title + line_raw) < 300:
                     pending_title += " " + line_raw
+                    # Пересчитываем level — он мог быть установлен по обрывку «3.»
+                    pending_level = self._guess_level(pending_title)
                 else:
                     pending_title = ""
                 misses = 0
@@ -176,17 +191,34 @@ class HeuristicParser:
         node = TocNode(title, level, page)
         if level == 2 and current_chapter:
             current_chapter.add_child(node)
+        elif level >= 3 and current_chapter:
+            # Вложить в последний level-2 узел текущей главы; если его нет —
+            # прикрепить прямо к главе (деградация до level-2).
+            if current_chapter.children:
+                current_chapter.children[-1].add_child(node)
+            else:
+                current_chapter.add_child(node)
         else:
             root.add_child(node)
         return node
 
     def _guess_level(self, text):
-        t = text.lower()
-        if any(w in t for w in
-               ['глава', 'chapter', 'часть', 'раздел', 'введение', 'заключение', 'об авторе', 'предисловие',
-                'благодарности']):
+        # Числовые паттерны проверяем первыми — они точнее ключевых слов.
+        if re.match(r'^\s*\d+\.\d+\.\d+', text):
+            return 3
+        # Голая нумерация без названия («1.», «3.», «II.») — главный раздел.
+        # Это типично для PDF с колоночной версткой ToC, где «3.» и «DEFINITIONS»
+        # извлекаются как отдельные строки и parser склеивает их через pending.
+        if re.match(r'^\s*\d+\.?\s*$', text) or re.match(r'^\s*[IVXLCDM]+\.?\s*$', text):
             return 1
         if re.match(r'^\s*\d+\.\s+[А-ЯA-Z]', text):
+            return 1
+        # Ключевые слова — только в начале строки (startswith), чтобы «Подраздел»
+        # не давал level=1 из-за подстроки «раздел».
+        t = text.strip().lower()
+        if any(t.startswith(w) for w in
+               ['глава', 'chapter', 'часть', 'раздел', 'введение', 'заключение', 'об авторе', 'предисловие',
+                'благодарности']):
             return 1
         return 2
 

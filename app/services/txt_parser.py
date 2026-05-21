@@ -20,17 +20,27 @@ def parse_txt(file_path) -> tuple:
     mapped = find_real_indices(full_text, sequence)
     final_nodes = []
 
-    for i in range(len(mapped)):
-        curr = mapped[i]
-        start = curr['end_idx']
-        end = mapped[i + 1]['start_idx'] if i + 1 < len(mapped) else len(full_text)
+    for i, curr in enumerate(mapped):
+        if curr['start_idx'] == -1:
+            final_nodes.append({
+                "title": curr['item']['title'],
+                "content": "",
+                "level": curr['item'].get('level', 1),
+                "page": 0,
+            })
+            continue
 
-        content = full_text[start:end].strip()
+        start = curr['end_idx']
+        next_start = min(
+            (m['start_idx'] for m in mapped if m['start_idx'] > start),
+            default=len(full_text)
+        )
+        content = full_text[start:next_start].strip()
         final_nodes.append({
             "title": curr['item']['title'],
             "content": content,
             "level": curr['item'].get('level', 1),
-            "page": 0
+            "page": 0,
         })
 
     return final_nodes, sequence

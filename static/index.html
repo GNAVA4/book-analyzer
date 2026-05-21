@@ -1,104 +1,364 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-    <meta charset="UTF-8">
-    <title>Анализатор Книг Pro</title>
-    <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; background: #f4f7f6; }
-        .container { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
-        #progressContainer { display: none; margin: 20px 0; }
-        .progress-bar { width: 100%; background: #eee; border-radius: 10px; height: 20px; overflow: hidden; }
-        .progress-fill { width: 0%; height: 100%; background: #28a745; transition: width 0.3s; }
-        textarea { width: 100%; height: 400px; margin-top: 20px; border: 1px solid #ddd; border-radius: 4px; padding: 10px; font-family: monospace; }
-        .controls { display: flex; gap: 10px; align-items: center; margin-bottom: 20px; }
-        button { padding: 10px 25px; background: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer; }
-        button:disabled { background: #ccc; }
-    </style>
+  <meta charset="UTF-8">
+  <title>Анализатор Книг Pro</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 24px 20px;
+      background: #f0f2f5;
+      color: #1a1a2e;
+    }
+
+    .container {
+      background: #fff;
+      padding: 32px;
+      border-radius: 14px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+    }
+
+    h1 { margin: 0 0 6px; font-size: 22px; font-weight: 600; }
+    .subtitle { color: #666; font-size: 14px; margin: 0 0 28px; }
+
+    /* --- Upload zone --- */
+    .upload-zone {
+      border: 2px dashed #ccd;
+      border-radius: 10px;
+      padding: 28px 20px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+      margin-bottom: 20px;
+    }
+    .upload-zone:hover, .upload-zone.drag-over {
+      border-color: #4a90e2;
+      background: #f0f6ff;
+    }
+    .upload-zone input[type=file] { display: none; }
+    .upload-zone .icon { font-size: 36px; margin-bottom: 8px; }
+    .upload-zone .label { font-size: 15px; color: #555; }
+    .upload-zone .filename { font-size: 13px; color: #4a90e2; margin-top: 6px; font-weight: 500; }
+
+    /* --- Controls --- */
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+
+    .mode-toggle {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      color: #444;
+      cursor: pointer;
+      user-select: none;
+    }
+    .mode-toggle input[type=checkbox] { width: 16px; height: 16px; cursor: pointer; }
+
+    .btn {
+      padding: 10px 28px;
+      background: #4a90e2;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 15px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s, transform 0.1s;
+    }
+    .btn:hover:not(:disabled) { background: #3a7bd5; }
+    .btn:active:not(:disabled) { transform: scale(0.98); }
+    .btn:disabled { background: #b0bec5; cursor: not-allowed; }
+
+    /* --- Progress --- */
+    #progressContainer { display: none; margin-bottom: 20px; }
+    #statusText { font-size: 13px; color: #555; margin-bottom: 6px; }
+    .progress-bar {
+      width: 100%;
+      background: #eee;
+      border-radius: 99px;
+      height: 8px;
+      overflow: hidden;
+    }
+    .progress-fill {
+      width: 0%;
+      height: 100%;
+      background: linear-gradient(90deg, #4a90e2, #43c6ac);
+      border-radius: 99px;
+      transition: width 0.3s ease;
+    }
+
+    /* --- Stats bar --- */
+    #statsBar {
+      display: none;
+      gap: 12px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+    .stat-pill {
+      background: #f0f4fa;
+      border: 1px solid #dce4f0;
+      border-radius: 99px;
+      padding: 4px 14px;
+      font-size: 13px;
+      color: #444;
+    }
+    .stat-pill b { color: #2c3e50; }
+    .stat-pill.warn { background: #fff8e1; border-color: #ffe082; color: #7a5c00; }
+    .stat-pill.warn b { color: #5d4037; }
+
+    /* --- Result area --- */
+    textarea {
+      width: 100%;
+      height: 420px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 12px;
+      font-family: 'Courier New', monospace;
+      font-size: 12px;
+      resize: vertical;
+      color: #333;
+      background: #fafafa;
+    }
+    textarea:focus { outline: 2px solid #4a90e2; border-color: transparent; }
+
+    .result-actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 10px;
+    }
+    .btn-sm {
+      padding: 6px 16px;
+      font-size: 13px;
+      background: #fff;
+      color: #4a90e2;
+      border: 1px solid #4a90e2;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .btn-sm:hover { background: #f0f6ff; }
+  </style>
 </head>
 <body>
-    <div class="container">
-        <h1>Анализ Технической Литературы</h1>
+<div class="container">
+  <h1>Анализатор технической литературы</h1>
+  <p class="subtitle">PDF, DOCX, TXT → структурированный XML с иерархией разделов</p>
 
-        <div class="controls">
-            <input type="file" id="fileInput" accept=".docx, .pdf">
-            <label><input type="checkbox" id="neuralMode"> Нейросеть (Qwen 2.5)</label>
-            <button id="startBtn" onclick="processFile()">Запустить анализ</button>
-        </div>
+  <!-- Upload zone -->
+  <div class="upload-zone" id="uploadZone" onclick="document.getElementById('fileInput').click()">
+    <div class="icon">📄</div>
+    <div class="label">Перетащите файл сюда или нажмите для выбора</div>
+    <div class="label" style="font-size:12px;margin-top:4px;color:#999">PDF, DOCX, TXT · до 150 МБ</div>
+    <div class="filename" id="chosenFile"></div>
+    <input type="file" id="fileInput" accept=".pdf,.docx,.txt" onchange="onFileChosen(this)">
+  </div>
 
-        <div id="progressContainer">
-            <div id="statusText">Подготовка...</div>
-            <div class="progress-bar"><div id="progressFill" class="progress-fill"></div></div>
-        </div>
+  <!-- Controls -->
+  <div class="controls">
+    <label class="mode-toggle">
+      <input type="checkbox" id="neuralMode">
+      Нейросеть (Qwen 2.5) — точнее для сложных PDF
+    </label>
+    <button class="btn" id="startBtn" onclick="processFile()">Запустить анализ</button>
+  </div>
 
-        <textarea id="resultArea" placeholder="XML результат появится здесь..."></textarea>
+  <!-- Progress -->
+  <div id="progressContainer">
+    <div id="statusText">Подготовка...</div>
+    <div class="progress-bar">
+      <div id="progressFill" class="progress-fill"></div>
     </div>
+  </div>
 
-    <script>
-        async function processFile() {
+  <!-- Stats -->
+  <div id="statsBar" style="display:flex"></div>
+
+  <!-- Result -->
+  <textarea id="resultArea" placeholder="XML-результат появится здесь..."></textarea>
+
+  <div class="result-actions">
+    <button class="btn-sm" onclick="copyXml()">Скопировать XML</button>
+    <button class="btn-sm" onclick="downloadXml()">Скачать .xml</button>
+  </div>
+</div>
+
+<script>
+  let currentTempId = null;
+  let currentOriginalName = null;
+
+  // --- Drag & drop ---
+  const zone = document.getElementById('uploadZone');
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag-over'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault();
+    zone.classList.remove('drag-over');
+    const file = e.dataTransfer.files[0];
+    if (file) setFile(file);
+  });
+
+  function onFileChosen(input) {
+    if (input.files[0]) setFile(input.files[0]);
+  }
+
+  function setFile(file) {
+    document.getElementById('chosenFile').textContent = `✓ ${file.name}`;
+    // Сбрасываем предыдущий temp_id при выборе нового файла
+    currentTempId = null;
+    currentOriginalName = file.name;
+    document.getElementById('fileInput').files; // просто держим ref
+    // Перевешиваем файл на input для FormData
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    document.getElementById('fileInput').files = dt.files;
+  }
+
+  // --- Основная логика ---
+  async function processFile() {
     const fileInput = document.getElementById('fileInput');
     const isNeural = document.getElementById('neuralMode').checked;
     const file = fileInput.files[0];
-    if (!file) return alert("Выберите файл");
+    if (!file) return alert('Выберите файл');
 
     const btn = document.getElementById('startBtn');
     const resultArea = document.getElementById('resultArea');
     const progressContainer = document.getElementById('progressContainer');
     const progressFill = document.getElementById('progressFill');
     const statusText = document.getElementById('statusText');
+    const statsBar = document.getElementById('statsBar');
 
     btn.disabled = true;
-    resultArea.value = "Загрузка файла...";
+    statsBar.style.display = 'none';
+    statsBar.innerHTML = '';
+    resultArea.value = '';
+    progressContainer.style.display = 'block';
+    progressFill.style.width = '0%';
+    statusText.textContent = 'Загрузка файла...';
 
     try {
-        // ШАГ 1: Загружаем файл
-        const formData = new FormData();
-        formData.append('file', file);
-        const uploadRes = await fetch('/upload', { method: 'POST', body: formData });
-        const { filename } = await uploadRes.json();
+      // ШАГ 1: загружаем файл, получаем temp_id
+      const formData = new FormData();
+      formData.append('file', file);
+      const uploadRes = await fetch('/upload', { method: 'POST', body: formData });
+      if (!uploadRes.ok) {
+        const err = await uploadRes.json();
+        throw new Error(err.detail || 'Ошибка загрузки');
+      }
+      const { temp_id, original_name } = await uploadRes.json();
+      currentTempId = temp_id;
+      currentOriginalName = original_name;
 
-        if (!isNeural) {
-            // ШАГ 2а: Быстрый режим
-            statusText.innerText = "Обработка алгоритмом...";
-            const res = await fetch(`/analyze/fast?filename=${encodeURIComponent(filename)}`, { method: 'POST' });
-            resultArea.value = await res.text();
-            btn.disabled = false;
-        } else {
-            // ШАГ 2б: WebSocket режим
-            progressContainer.style.display = 'block';
-            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const ws = new WebSocket(`${protocol}//${window.location.host}/ws/analyze`);
+      progressFill.style.width = '5%';
+      statusText.textContent = 'Файл загружен. Анализируем...';
 
-            ws.onopen = () => {
-                ws.send(JSON.stringify({ filename: filename }));
-            };
-
-            ws.onmessage = (e) => {
-                const data = JSON.parse(e.data);
-                if (data.type === 'progress') {
-                    progressFill.style.width = data.percent + '%';
-                    statusText.innerText = `${data.percent}% - ${data.message}`;
-                } else if (data.type === 'complete') {
-                    resultArea.value = data.xml;
-                    statusText.innerText = "Готово!";
-                    btn.disabled = false;
-                    ws.close();
-                } else if (data.type === 'error') {
-                    alert("Ошибка: " + data.message);
-                    btn.disabled = false;
-                }
-            };
-
-            ws.onerror = (err) => {
-                console.error("WS Error:", err);
-                alert("Ошибка подключения к WebSocket. Убедитесь, что установлены библиотеки websockets.");
-                btn.disabled = false;
-            };
+      if (!isNeural) {
+        // --- Быстрый режим ---
+        const res = await fetch(`/analyze/fast?temp_id=${encodeURIComponent(temp_id)}`, { method: 'POST' });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.detail || `HTTP ${res.status}`);
         }
-    } catch (err) {
-        alert("Ошибка: " + err.message);
+        const xml = await res.text();
+        resultArea.value = xml;
+        progressFill.style.width = '100%';
+        statusText.textContent = '✓ Готово (алгоритм)';
         btn.disabled = false;
+
+      } else {
+        // --- Neural режим (WebSocket) ---
+        const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const ws = new WebSocket(`${protocol}//${location.host}/ws/analyze`);
+
+        ws.onopen = () => ws.send(JSON.stringify({ temp_id }));
+
+        ws.onmessage = (e) => {
+          const data = JSON.parse(e.data);
+
+          if (data.type === 'progress') {
+            progressFill.style.width = data.percent + '%';
+            statusText.textContent = `${data.percent}% — ${data.message}`;
+
+          } else if (data.type === 'complete') {
+            resultArea.value = data.xml;
+            progressFill.style.width = '100%';
+            statusText.textContent = '✓ Готово (нейросеть)';
+            btn.disabled = false;
+
+            // Показываем статистику confidence
+            if (data.stats) showStats(data.stats);
+            ws.close();
+
+          } else if (data.type === 'error') {
+            alert('Ошибка: ' + data.message);
+            btn.disabled = false;
+            ws.close();
+          }
+        };
+
+        ws.onerror = () => {
+          alert('Ошибка WebSocket. Убедитесь, что установлен пакет websockets.');
+          btn.disabled = false;
+        };
+      }
+
+    } catch (err) {
+      alert('Ошибка: ' + err.message);
+      btn.disabled = false;
+      progressContainer.style.display = 'none';
     }
-}
-    </script>
+  }
+
+  function showStats(stats) {
+    const bar = document.getElementById('statsBar');
+    const lowConf = stats.low_confidence_sections || 0;
+
+    if (stats.unreadable) {
+      bar.innerHTML = `
+        <span class="stat-pill warn" style="flex:1">
+          ⚠ <b>Документ нечитаем</b> — текст содержит артефакты OCR.
+          Попробуйте конвертировать PDF в читаемый формат или используйте OCR-инструменты.
+        </span>
+      `;
+      bar.style.display = 'flex';
+      return;
+    }
+
+    bar.innerHTML = `
+      <span class="stat-pill">Разделов: <b>${stats.total_sections}</b></span>
+      <span class="stat-pill">Средний confidence: <b>${(stats.avg_confidence * 100).toFixed(0)}%</b></span>
+      <span class="stat-pill ${lowConf > 0 ? 'warn' : ''}">
+        Нечёткий маппинг: <b>${lowConf}</b> ${lowConf > 0 ? '⚠' : '✓'}
+      </span>
+    `;
+    bar.style.display = 'flex';
+  }
+
+  function copyXml() {
+    const text = document.getElementById('resultArea').value;
+    if (!text) return;
+    navigator.clipboard.writeText(text).then(() => alert('Скопировано!'));
+  }
+
+  function downloadXml() {
+    const text = document.getElementById('resultArea').value;
+    if (!text) return;
+    const name = (currentOriginalName || 'result').replace(/\.[^.]+$/, '') + '.xml';
+    const blob = new Blob([text], { type: 'application/xml' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    a.click();
+  }
+</script>
 </body>
 </html>

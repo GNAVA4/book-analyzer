@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c ' *)",
+      "Bash(curl -s http://127.0.0.1:1234/v1/models)",
+      "Bash(curl -s -X POST http://127.0.0.1:1234/v1/chat/completions -H \"Content-Type: application/json\" -d \"{\\\\\"model\\\\\":\\\\\"qwen3.6-35b-a3b\\\\\",\\\\\"messages\\\\\":[{\\\\\"role\\\\\":\\\\\"user\\\\\",\\\\\"content\\\\\":\\\\\"reply OK\\\\\"}],\\\\\"max_tokens\\\\\":5}\")",
+      "Bash(venv/Scripts/python.exe -c ' *)"
+    ]
+  }
+}
