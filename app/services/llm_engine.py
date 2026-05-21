@@ -8,7 +8,7 @@ from openai import AsyncOpenAI
 # Константы
 # ---------------------------------------------------------------------------
 
-LLM_MODEL = "qwen2.5-14b-instruct"     # non-reasoning, отвечает в content
+LLM_MODEL = "qwen2.5-7b-instruct"      # non-reasoning, отвечает в content
 LLM_CHUNK_SIZE = 6_000             # максимальный размер одного чанка (символов)
 LLM_BOUNDARY_CONTEXT = 800        # сколько символов даём LLM для уточнения границы
 LLM_MAX_PARALLEL = 3              # максимум параллельных вызовов к LM Studio/Ollama
@@ -130,6 +130,79 @@ class LLMEngine:
         except Exception as e:
             print(f"LLM ToC Error: {e}")
             return []
+
+    # -----------------------------------------------------------------------
+    # Deep scan: LLM предлагает структуру по полному тексту
+    # -----------------------------------------------------------------------
+
+    async def propose_structure_from_text(self, full_text: str, chunk_size: int = 12_000) -> list:
+        """
+        Дорогой fallback: книга без ToC. Разбиваем текст на крупные chunks
+        и просим LLM предложить точки разделения на главы — заголовок
+        первого предложения, тема, индекс начала в chunk-е.
+
+        Возвращает sequence в формате [{title, level, page}, ...].
+        Page = None (мы не знаем номер из текста), find_real_indices
+        будет искать по title через токенизацию.
+
+        Метод медленный (минуты на большую книгу) и предназначен
+        только для опционального deep-scan режима.
+        """
+        if not full_text:
+            return []
+
+        items: list = []
+        # Берём первые ~150K символов — обычно этого хватает на оглавление крупной книги.
+        # Больше — слишком медленно, и качество структурирования падает.
+        text = full_text[:150_000]
+        chunks = [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
+
+        prompt_template = (
+            "Твоя роль: технический редактор. Перед тобой фрагмент книги без оглавления.\n"
+            "Задача: найди в нём ЯВНЫЕ заголовки разделов (главы, части, разделы).\n\n"
+            "Правила:\n"
+            "1. Верни ТОЛЬКО JSON-объект с ключом \"items\".\n"
+            "2. Элемент: {\"title\": \"<заголовок как в тексте>\", \"level\": <1|2|3>}.\n"
+            "3. Не выдумывай заголовки которых нет в тексте.\n"
+            "4. Если заголовков нет — верни {\"items\": []}.\n\n"
+            "Фрагмент:\n---\n{chunk}\n---"
+        )
+
+        for idx, chunk in enumerate(chunks):
+            try:
+                async with self._semaphore:
+                    response = await self.client.chat.completions.create(
+                        model=self.model,
+                        messages=[{"role": "user", "content": prompt_template.format(chunk=chunk)}],
+                        temperature=0.1,
+                        max_tokens=LLM_MAX_TOKENS,
+                    )
+                raw = _extract_message_content(response.choices[0].message)
+                json_match = re.search(r'\{[\s\S]*\}', raw)
+                if not json_match:
+                    continue
+                data = json.loads(json_match.group())
+                for it in data.get("items", []):
+                    title = str(it.get("title", "")).strip()
+                    if title:
+                        items.append({
+                            "title": title,
+                            "level": int(it.get("level", 1)) if it.get("level") else 1,
+                            "page": None,
+                        })
+            except Exception as e:
+                print(f"LLM deep-scan chunk {idx} error: {e}")
+                continue
+
+        # Убираем дубликаты, сохраняя первый встреченный порядок
+        seen = set()
+        unique: list = []
+        for it in items:
+            key = it["title"].lower()
+            if key not in seen:
+                seen.add(key)
+                unique.append(it)
+        return unique
 
     # -----------------------------------------------------------------------
     # Уточнение границы главы

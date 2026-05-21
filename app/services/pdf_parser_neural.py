@@ -15,6 +15,13 @@ from .llm_engine import llm_client, LLM_BOUNDARY_CONTEXT
 # partial_words (0.60) и num_prefix (0.40) — LLM.
 CONFIDENCE_THRESHOLD = 0.80
 
+# Если эвристика нашла ≤ этого числа пунктов ToC — пробуем LLM-fallback.
+# Защищает от книг без явного оглавления (титул/копирайт сразу за обложкой).
+TOC_HEURISTIC_MIN_SECTIONS = 3
+# Сколько страниц передавать LLM для извлечения ToC
+TOC_LLM_PAGES = 25
+TOC_LLM_MAX_CHARS = 20_000
+
 _GARBAGE_NOTICE = (
     "[ДОКУМЕНТ НЕЧИТАЕМ]\n"
     "Текст содержит артефакты плохого OCR или нечитаемый шрифт.\n"
@@ -22,18 +29,21 @@ _GARBAGE_NOTICE = (
 )
 
 
-async def parse_pdf_neural(file_path: str, progress_callback=None) -> tuple:
+async def parse_pdf_neural(file_path: str, progress_callback=None, deep_scan: bool = False) -> tuple:
     """
     Гибридный режим: алгоритм + селективный LLM.
 
-    Сначала проверяет читаемость документа.
-    Если текст нечитаем — сразу возвращает предупреждение,
-    не тратя время на LLM-вызовы с мусорным входом.
+    Этапы:
+      1. Проверка читаемости (детектор кракозябр).
+      2. Эвристический ToC. Если найдено ≤ TOC_HEURISTIC_MIN_SECTIONS —
+         LLM-fallback на извлечение ToC из первых страниц.
+      3. Если deep_scan=True и оба способа дали мало — LLM генерирует
+         структуру по chunks полного текста (МЕДЛЕННО, для книг без ToC).
+      4. Маппинг секций с confidence-scoring.
+      5. Очистка чанков: алгоритмически при confidence ≥ 0.80, через LLM иначе.
 
-    Пороги:
-      confidence >= 0.80  →  fast_clean_chunk (алгоритм)
-      confidence <  0.80  →  fix_chapter_boundary + LLM
-      confidence == 0.0   →  глава не найдена, пустой узел
+    Возвращает tuple (final_nodes, sequence, meta), где meta содержит
+    диагностику (toc_source, прочее).
     """
     doc = fitz.open(file_path)
 
@@ -60,11 +70,11 @@ async def parse_pdf_neural(file_path: str, progress_callback=None) -> tuple:
                 "page": 0,
                 "confidence": 0.0,
             }
-        ], []
+        ], [], {"toc_source": "none", "reason": "unreadable"}
 
-    # --- ToC ---
+    # --- ToC (эвристика) ---
     if progress_callback:
-        await progress_callback(5, "Поиск оглавления...")
+        await progress_callback(5, "Поиск оглавления (эвристика)...")
 
     toc_raw = ""
     for i in range(min(20, len(doc))):
@@ -73,6 +83,54 @@ async def parse_pdf_neural(file_path: str, progress_callback=None) -> tuple:
     parser = HeuristicParser()
     toc_tree = parser.parse_toc(toc_raw)
     sequence = toc_to_linear_sequence(toc_tree)
+    toc_source = "heuristic"
+
+    # --- LLM-fallback для оглавления ---
+    # Если эвристика практически ничего не нашла (титульная страница без ToC,
+    # сложная вёрстка), просим LLM извлечь структуру из первых страниц.
+    if len(sequence) <= TOC_HEURISTIC_MIN_SECTIONS:
+        if progress_callback:
+            await progress_callback(
+                7,
+                f"Эвристика нашла {len(sequence)} пунктов — запрашиваю ToC у LLM..."
+            )
+        llm_pages = ""
+        for i in range(min(TOC_LLM_PAGES, len(doc))):
+            llm_pages += doc[i].get_text() + "\n"
+        llm_items = await llm_client.extract_toc_json(llm_pages[:TOC_LLM_MAX_CHARS])
+        if len(llm_items) > len(sequence):
+            # Нормализуем формат к тому, что использует find_real_indices
+            sequence = [
+                {
+                    "title": str(it.get("title", "")).strip(),
+                    "level": int(it.get("level", 1)) if it.get("level") else 1,
+                    "page": int(it.get("page")) if str(it.get("page", "")).isdigit() else None,
+                }
+                for it in llm_items
+                if it.get("title")
+            ]
+            toc_source = "llm"
+            print(f"[neural] LLM-ToC: {len(sequence)} пунктов")
+
+    print(f"[neural] ToC source: {toc_source}, sections: {len(sequence)}")
+
+    # --- Deep LLM scan: документ совсем без ToC ---
+    # Дорогой режим, включается флагом. LLM проходит по полному тексту
+    # chunks и сама придумывает заголовки разделов.
+    deep_scan_used = False
+    if deep_scan and len(sequence) <= TOC_HEURISTIC_MIN_SECTIONS:
+        if progress_callback:
+            await progress_callback(
+                8, "Deep-scan: LLM анализирует полный текст для построения структуры..."
+            )
+        # Полный текст потребуется ниже; читаем его сейчас один раз.
+        full_text_for_scan = get_all_text(doc)
+        proposed = await llm_client.propose_structure_from_text(full_text_for_scan)
+        if len(proposed) > len(sequence):
+            sequence = proposed
+            toc_source = "llm_deep_scan"
+            deep_scan_used = True
+            print(f"[neural] Deep-scan: предложено {len(sequence)} разделов")
 
     # --- Полный текст и маппинг ---
     if progress_callback:
@@ -167,4 +225,8 @@ async def parse_pdf_neural(file_path: str, progress_callback=None) -> tuple:
         await progress_callback(97, "Формирование XML...")
 
     doc.close()
-    return final_nodes, sequence
+    meta = {
+        "toc_source": toc_source,
+        "deep_scan_used": deep_scan_used,
+    }
+    return final_nodes, sequence, meta

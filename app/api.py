@@ -79,6 +79,77 @@ async def upload_file(file: UploadFile = File(...)):
     return {"temp_id": temp_id, "original_name": file.filename}
 
 
+@router.websocket("/ws/analyze")
+async def websocket_analyze(websocket: WebSocket):
+    """
+    Гибридный (neural) анализ через WebSocket.
+    Клиент шлёт: {"temp_id": "...", "deep_scan": false}
+
+      deep_scan: bool (default false) — если ToC не найден ни эвристикой
+                 ни через LLM, запустить дорогой режим где LLM сама
+                 строит структуру по chunks полного текста. МЕДЛЕННО.
+
+    Сообщения от сервера:
+      {"type": "progress", "percent": 0-100, "message": "..."}
+      {"type": "complete",  "xml": "...", "stats": {...}}
+      {"type": "error",     "message": "..."}
+    """
+    await websocket.accept()
+    temp_path = None
+
+    try:
+        data = await websocket.receive_json()
+        temp_id = data.get("temp_id")
+        deep_scan = bool(data.get("deep_scan", False))
+
+        if not temp_id:
+            await websocket.send_json({"type": "error", "message": "temp_id не передан"})
+            return
+
+        temp_path = os.path.join(tempfile.gettempdir(), temp_id)
+        if not os.path.exists(temp_path):
+            await websocket.send_json({"type": "error", "message": "Файл не найден. Загрузите заново."})
+            return
+
+        async def send_status(pct: int, msg: str):
+            await websocket.send_json({"type": "progress", "percent": pct, "message": msg})
+
+        flat_nodes, toc_sequence, meta = await parse_pdf_neural(
+            temp_path, progress_callback=send_status, deep_scan=deep_scan
+        )
+
+        stats = {
+            "total_sections": len(flat_nodes),
+            "avg_confidence": round(
+                sum(n.get('confidence', 1.0) for n in flat_nodes) / max(len(flat_nodes), 1),
+                3
+            ),
+            "low_confidence_sections": sum(
+                1 for n in flat_nodes if n.get('confidence', 1.0) < 0.80
+            ),
+            "unreadable": any(
+                "НЕЧИТАЕМ" in n.get('content', '') for n in flat_nodes
+            ),
+            "toc_source": meta.get("toc_source", "unknown"),
+            "deep_scan_used": meta.get("deep_scan_used", False),
+        }
+
+        tree_data = build_tree_structure(flat_nodes)
+        xml_content = dict_to_xml(tree_data, toc_items=toc_sequence)
+
+        await websocket.send_json({
+            "type": "complete",
+            "xml": xml_content,
+            "stats": stats,
+        })
+
+    except Exception as e:
+        await websocket.send_json({"type": "error", "message": str(e)})
+    finally:
+        _safe_remove(temp_path)
+        await websocket.close()
+
+
 @router.post("/analyze/fast")
 async def analyze_fast(temp_id: str):
     """Алгоритмический анализ. Принимает temp_id из /upload."""
@@ -105,63 +176,3 @@ async def analyze_fast(temp_id: str):
         _safe_remove(temp_path)
 
 
-@router.websocket("/ws/analyze")
-async def websocket_analyze(websocket: WebSocket):
-    """
-    Гибридный (neural) анализ через WebSocket.
-    Клиент шлёт: {"temp_id": "..."}
-
-    Сообщения от сервера:
-      {"type": "progress", "percent": 0-100, "message": "..."}
-      {"type": "complete",  "xml": "...", "stats": {...}}
-      {"type": "error",     "message": "..."}
-    """
-    await websocket.accept()
-    temp_path = None
-
-    try:
-        data = await websocket.receive_json()
-        temp_id = data.get("temp_id")
-
-        if not temp_id:
-            await websocket.send_json({"type": "error", "message": "temp_id не передан"})
-            return
-
-        temp_path = os.path.join(tempfile.gettempdir(), temp_id)
-        if not os.path.exists(temp_path):
-            await websocket.send_json({"type": "error", "message": "Файл не найден. Загрузите заново."})
-            return
-
-        async def send_status(pct: int, msg: str):
-            await websocket.send_json({"type": "progress", "percent": pct, "message": msg})
-
-        flat_nodes, toc_sequence = await parse_pdf_neural(temp_path, progress_callback=send_status)
-
-        stats = {
-            "total_sections": len(flat_nodes),
-            "avg_confidence": round(
-                sum(n.get('confidence', 1.0) for n in flat_nodes) / max(len(flat_nodes), 1),
-                3
-            ),
-            "low_confidence_sections": sum(
-                1 for n in flat_nodes if n.get('confidence', 1.0) < 0.80
-            ),
-            "unreadable": any(
-                "НЕЧИТАЕМ" in n.get('content', '') for n in flat_nodes
-            ),
-        }
-
-        tree_data = build_tree_structure(flat_nodes)
-        xml_content = dict_to_xml(tree_data, toc_items=toc_sequence)
-
-        await websocket.send_json({
-            "type": "complete",
-            "xml": xml_content,
-            "stats": stats,
-        })
-
-    except Exception as e:
-        await websocket.send_json({"type": "error", "message": str(e)})
-    finally:
-        _safe_remove(temp_path)
-        await websocket.close()
