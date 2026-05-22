@@ -18,3 +18,10 @@ ws_temp_*
 
 # Окружение
 .env
+
+# Тестовые PDF (большие, локальные)
+test/
+
+# Локальные настройки Claude Code
+.claude/settings.json
+.claude/settings.local.json

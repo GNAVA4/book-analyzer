@@ -101,6 +101,7 @@ async def websocket_analyze(websocket: WebSocket):
         data = await websocket.receive_json()
         temp_id = data.get("temp_id")
         deep_scan = bool(data.get("deep_scan", False))
+        use_ocr = bool(data.get("use_ocr", True))
 
         if not temp_id:
             await websocket.send_json({"type": "error", "message": "temp_id не передан"})
@@ -115,7 +116,10 @@ async def websocket_analyze(websocket: WebSocket):
             await websocket.send_json({"type": "progress", "percent": pct, "message": msg})
 
         flat_nodes, toc_sequence, meta = await parse_pdf_neural(
-            temp_path, progress_callback=send_status, deep_scan=deep_scan
+            temp_path,
+            progress_callback=send_status,
+            deep_scan=deep_scan,
+            use_ocr=use_ocr,
         )
 
         stats = {
@@ -132,6 +136,7 @@ async def websocket_analyze(websocket: WebSocket):
             ),
             "toc_source": meta.get("toc_source", "unknown"),
             "deep_scan_used": meta.get("deep_scan_used", False),
+            "ocr_used": meta.get("ocr_used", False),
         }
 
         tree_data = build_tree_structure(flat_nodes)

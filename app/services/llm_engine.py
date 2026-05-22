@@ -9,10 +9,12 @@ from openai import AsyncOpenAI
 # ---------------------------------------------------------------------------
 
 LLM_MODEL = "qwen2.5-7b-instruct"      # non-reasoning, отвечает в content
-LLM_CHUNK_SIZE = 6_000             # максимальный размер одного чанка (символов)
-LLM_BOUNDARY_CONTEXT = 800        # сколько символов даём LLM для уточнения границы
+LLM_CHUNK_SIZE = 2_500             # максимальный размер одного чанка (символов).
+                                   # Под 4096-token context qwen2.5-7b. Для моделей
+                                   # с увеличенным контекстом можно поднять.
+LLM_BOUNDARY_CONTEXT = 600        # сколько символов даём LLM для уточнения границы
 LLM_MAX_PARALLEL = 3              # максимум параллельных вызовов к LM Studio/Ollama
-LLM_MAX_TOKENS = 8_192            # запас для reasoning-моделей (Qwen3 etc.)
+LLM_MAX_TOKENS = 1_024            # ответ обычно меньше; запас на reasoning-модели
 
 # Фразы-маркеры, которые LLM добавляет вопреки инструкциям.
 # Строки с этих фраз в начале ответа будут обрезаны.
@@ -135,7 +137,7 @@ class LLMEngine:
     # Deep scan: LLM предлагает структуру по полному тексту
     # -----------------------------------------------------------------------
 
-    async def propose_structure_from_text(self, full_text: str, chunk_size: int = 12_000) -> list:
+    async def propose_structure_from_text(self, full_text: str, chunk_size: int = 5_000) -> list:
         """
         Дорогой fallback: книга без ToC. Разбиваем текст на крупные chunks
         и просим LLM предложить точки разделения на главы — заголовок
@@ -203,6 +205,51 @@ class LLMEngine:
                 seen.add(key)
                 unique.append(it)
         return unique
+
+    # -----------------------------------------------------------------------
+    # Точечное нахождение заголовка в окне текста
+    # -----------------------------------------------------------------------
+
+    async def locate_section_in_text(self, title: str, text_window: str) -> int:
+        """
+        Точечный LLM-маппинг для секций, которые эвристика не нашла.
+
+        Просит LLM найти, с какого символа в окне начинается раздел `title`,
+        даже если он записан по-другому ("Глава 1" vs "Глава первая").
+
+        Возвращает смещение от начала окна, либо -1 если не найдено.
+        """
+        if len(text_window.strip()) < 20:
+            return -1
+
+        prompt = (
+            f"Найди в тексте ниже, где начинается раздел «{title}».\n"
+            "Допустимы лёгкие отличия: разный регистр, римские/арабские цифры, "
+            "сокращения, перенос строки внутри заголовка.\n\n"
+            "Верни ТОЛЬКО одно целое число — позицию (в символах от начала текста), "
+            "где находится первый символ найденного заголовка.\n"
+            "Если раздел не найден — верни -1.\n\n"
+            f"Текст:\n{text_window}"
+        )
+        try:
+            async with self._semaphore:
+                response = await self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.0,
+                    max_tokens=64,
+                )
+            raw = _extract_message_content(response.choices[0].message).strip()
+            numbers = re.findall(r'-?\d+', raw)
+            if not numbers:
+                return -1
+            offset = int(numbers[-1])
+            if offset < 0 or offset >= len(text_window):
+                return -1
+            return offset
+        except Exception as e:
+            print(f"LLM locate error for «{title[:40]}»: {e}")
+            return -1
 
     # -----------------------------------------------------------------------
     # Уточнение границы главы

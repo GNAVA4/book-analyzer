@@ -1,6 +1,27 @@
 import re
 
 
+# Паттерны "мусорных" пунктов ToC, которые встречаются на титульных страницах:
+# копирайт, выходные данные, ISBN — не являются разделами книги.
+_TOC_GARBAGE_PATTERNS = [
+    re.compile(r'^©', re.IGNORECASE),
+    re.compile(r'^\s*ISBN\b', re.IGNORECASE),
+    re.compile(r'^\s*ББК\b', re.IGNORECASE),
+    re.compile(r'^\s*УДК\b', re.IGNORECASE),
+    re.compile(r'^\s*[a-zA-Zа-яА-Я]{1,2}\s*$'),   # одна-две буквы
+    re.compile(r'^\s*\d+\s*$'),                     # только цифры
+    re.compile(r'^[\W_]+$'),                        # только не-буквенные символы
+]
+
+
+def _is_garbage_toc_item(title: str) -> bool:
+    """True если пункт ToC выглядит как титульный мусор (©, ББК, ISBN, и т.п.)."""
+    if not title or len(title.strip()) < 3:
+        return True
+    t = title.strip()
+    return any(p.match(t) for p in _TOC_GARBAGE_PATTERNS)
+
+
 class TocNode:
     def __init__(self, title, level, page=None):
         self.title = title
@@ -15,6 +36,13 @@ class TocNode:
 class HeuristicParser:
     def __init__(self):
         self.header_markers = ['оглавление', 'содержание', 'contents', 'table of contents']
+        # Маркеры, после которых ToC заканчивается — это списки рисунков/таблиц
+        # с сотнями подписей-нелистинговых заголовков (типичная проблема MIL-STD).
+        self.toc_terminator_markers = [
+            'list of figures', 'list of tables', 'list of illustrations',
+            'список рисунков', 'список таблиц', 'список иллюстраций',
+            'figures', 'tables',  # одиночные слова — рискованно, но в контексте ToC ОК
+        ]
 
         # 1. ПАТТЕРН ПУНКТА С НОМЕРОМ СТРАНИЦЫ
         self.item_pattern = re.compile(
@@ -85,6 +113,14 @@ class HeuristicParser:
             match_start = self.item_pattern_start.match(line_raw)
             match_loose = self.loose_item_pattern.match(line_raw)
             has_page = bool(match_strict or match_start or match_loose)
+
+            # Терминатор: после "LIST OF FIGURES" / "СПИСОК ТАБЛИЦ" идут сотни
+            # подписей-нелистинговых заголовков. Это засоряет ToC (MIL-STD случай).
+            line_low = line_raw.lower().strip()
+            if len(line_raw) < 60 and any(m in line_low for m in self.toc_terminator_markers):
+                # Сбрасываем pending перед выходом, чтобы не добавить мусор
+                pending_title = ""
+                break
 
             if not has_page and self._is_content_start(norm_line, seen_titles):
                 break
@@ -245,7 +281,7 @@ class HeuristicParser:
 # ЭТА ФУНКЦИЯ ДОЛЖНА БЫТЬ ЗДЕСЬ (ДЛЯ ИСПРАВЛЕНИЯ IMPORT ERROR)
 def toc_to_linear_sequence(node: TocNode) -> list:
     sequence = []
-    if node.title != "Root":
+    if node.title != "Root" and not _is_garbage_toc_item(node.title):
         p = int(node.page) if str(node.page).isdigit() else None
         sequence.append({"title": node.title, "level": node.level, "page": p})
     for child in node.children:
