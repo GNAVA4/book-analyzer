@@ -19,6 +19,29 @@ from .llm_engine import llm_client
 from .embedding_engine import embedding_client
 
 
+# Паттерн «строки оглавления»: либо точки-лидеры + число в конце, либо
+# короткое «N.N название ... число». Если в первых N строках после места
+# совпадения большинство строк такие — это ToC, не основной текст.
+_TOC_LINE_PATTERN = re.compile(
+    r'(?:\.{3,}|\s*[._]{2,})\s*\d{1,4}\s*$|^\s*\d+(?:\.\d+)+\s+\S'
+)
+
+
+def _looks_like_toc_content(text: str, sample_lines: int = 10) -> bool:
+    """
+    True если первые sample_lines строк выглядят как ToC: много точек-лидеров,
+    короткие строки оканчивающиеся числом. Это означает что секция найдена
+    ВНУТРИ страниц оглавления, а не в основном тексте.
+    """
+    if not text:
+        return False
+    lines = [l.strip() for l in text.splitlines() if l.strip()][:sample_lines]
+    if len(lines) < 3:
+        return False
+    toc_like = sum(1 for l in lines if _TOC_LINE_PATTERN.search(l))
+    return toc_like / len(lines) > 0.5
+
+
 # Размер окна для page-hint поиска (в символах от ожидаемой позиции)
 PAGE_HINT_WINDOW = 5_000
 # Размер окна для embedding/LLM rescue
@@ -103,8 +126,13 @@ async def map_sequence(
         return mapped
 
     full_text_len = len(full_text)
-    not_found = [i for i, m in enumerate(mapped) if m['start_idx'] == -1]
 
+    # --- РАННИЙ verify: убираем находки внутри страниц ToC ---
+    # Запускаем ДО rescue, чтобы передать «найденные в ToC» секции на rescue,
+    # как настоящие not_found. Иначе они останутся с ложным confidence=1.0.
+    mapped = _verify_and_correct_order(mapped, full_text, full_text_len)
+
+    not_found = [i for i, m in enumerate(mapped) if m['start_idx'] == -1]
     if not not_found:
         return mapped
 
@@ -186,7 +214,8 @@ async def map_sequence(
         if emb_rescued or llm_rescued:
             print(f"[mapping] emb_rescue: {emb_rescued}, llm_rescue: {llm_rescued}")
 
-    # --- Уровень 5: verification (порядок) ---
+    # Финальная проверка ПОРЯДКА (out-of-order). In-ToC уже проверен в начале;
+    # после rescue могут появиться новые out-of-order — их нужно отловить.
     mapped = _verify_and_correct_order(mapped, full_text, full_text_len)
 
     return mapped
@@ -194,43 +223,51 @@ async def map_sequence(
 
 def _verify_and_correct_order(mapped: list, full_text: str, full_text_len: int) -> list:
     """
-    Проверяет что найденные секции расположены в правильном порядке.
+    Проверяет результаты маппинга:
+      1. Out-of-order: если секция N оказалась раньше секции M раньше неё в ToC,
+         маппинг ошибся (типично: rescue нашёл в Примечаниях).
+      2. Found inside ToC: если контент после совпадения выглядит как сама
+         таблица оглавления (точки-лидеры, page-нумерация), значит секция
+         «найдена» внутри страниц ToC, а не в основном тексте.
 
-    Если секция N оказалась раньше секции M (где N > M+TOLERANCE),
-    значит mapping ошибся. Помечаем её как not_found, чтобы XML не получил
-    «Главу 8» внутри «Главы 3».
-
-    Простой алгоритм:
-      идём по mapped, поддерживаем running_max(start_idx)
-      если очередной start_idx сильно меньше running_max — отбрасываем
+    Помечаем такие как not_found, чтобы XML не получил мусорные секции.
     """
     running_max = -1
-    last_strong_strategy = None  # exact/tokenized — доверяем
-    corrected = 0
+    out_of_order = 0
+    toc_content = 0
 
+    # --- Проверка 1: «контент это сам ToC» ---
+    # Берём фиксированные 800 chars после end_idx (НЕ ограничивая next_start),
+    # потому что внутри ToC секции идут подряд через узкие промежутки,
+    # и без расширения окна не накопится достаточно строк для детекции.
+    for i, m in enumerate(mapped):
+        if m['start_idx'] == -1:
+            continue
+        content_preview = full_text[m['end_idx']: m['end_idx'] + 800]
+        if _looks_like_toc_content(content_preview):
+            m['start_idx'] = -1
+            m['end_idx'] = -1
+            m['confidence'] = 0.0
+            m['match_strategy'] = 'reverted_in_toc'
+            toc_content += 1
+
+    # --- Проверка 2: out-of-order ---
     for i, m in enumerate(mapped):
         if m['start_idx'] == -1:
             continue
         strat = m.get('match_strategy', '')
-
-        # Если предыдущая «сильная» находка была дальше — текущая подозрительна
         if running_max > 0 and m['start_idx'] < running_max - 1000:
-            # Доверяем exact/tokenized больше чем rescue/page_hint
             if strat in ('embedding_rescue', 'llm_rescue') or 'page_hint' in strat:
                 m['start_idx'] = -1
                 m['end_idx'] = -1
                 m['confidence'] = 0.0
-                m['match_strategy'] = f'reverted_out_of_order'
-                corrected += 1
+                m['match_strategy'] = 'reverted_out_of_order'
+                out_of_order += 1
                 continue
-            # Если это сильная стратегия — возможно прошлый поиск ошибся,
-            # но мы не можем легко вернуться; просто оставляем.
-
         if m['start_idx'] > running_max:
             running_max = m['start_idx']
-            last_strong_strategy = strat
 
-    if corrected:
-        print(f"[mapping] verify: reverted {corrected} out-of-order sections")
+    if out_of_order or toc_content:
+        print(f"[mapping] verify: reverted {out_of_order} out-of-order, {toc_content} in-ToC")
 
     return mapped

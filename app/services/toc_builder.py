@@ -143,14 +143,72 @@ async def _llm_expand_parts(sequence: list, full_text: str, progress_cb=None) ->
     return expanded if len(expanded) > len(sequence) else sequence
 
 
+# --- Post-processing ---------------------------------------------------------
+
+def _dedup_and_order(sequence: list) -> list:
+    """
+    Удаляет точные дубли (title+page) и сортирует по странице, если страницы
+    известны для большинства пунктов.
+
+    Решает проблему «парсер захватил два оглавления подряд» (краткое +
+    детальное в одной книге) — после дедупа и сортировки получаем единый
+    упорядоченный список с подразделами после их родительских глав.
+    """
+    if not sequence:
+        return sequence
+
+    seen = set()
+    deduped = []
+    for s in sequence:
+        title = (s.get('title') or '').lower().strip()
+        if not title:
+            continue
+        key = (title, s.get('page'))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(s)
+
+    has_pages = sum(1 for s in deduped if isinstance(s.get('page'), int))
+    if has_pages / max(len(deduped), 1) > 0.7:
+        # Стабильная сортировка: страницы по возрастанию, None в конец
+        deduped.sort(key=lambda s: (
+            not isinstance(s.get('page'), int),
+            s.get('page') if isinstance(s.get('page'), int) else 0,
+        ))
+
+    return deduped
+
+
 # --- Helpers -----------------------------------------------------------------
 
 def _normalize_llm_items(items: list) -> list:
-    """Приводит LLM-возвращённые items к стандартному формату sequence."""
+    """
+    Приводит LLM-возвращённые items к стандартному формату sequence.
+
+    Отвергает явно «склеенные» title (когда LLM засунула в один пункт
+    целую часть с подразделами): >150 символов, или содержит несколько
+    page-нумеров внутри (паттерн «текст 21 текст 41»).
+
+    Также отвергает title с CJK/арабскими символами — это галлюцинация.
+    """
+    import re as _re
+    multi_page_pat = _re.compile(r'\d{1,3}\s+\S.{3,}?\s+\d{1,3}')
+    cjk_pat = _re.compile(r'[一-鿿぀-ヿ가-힯؀-ۿ]')
+
     out = []
     for it in items:
         title = str(it.get("title", "")).strip()
-        if not title:
+        if not title or len(title) < 2:
+            continue
+        if len(title) > 150:
+            print(f"[toc_builder] skip overlong LLM title: {title[:60]}...")
+            continue
+        if multi_page_pat.search(title):
+            print(f"[toc_builder] skip multi-page title (склейка подразделов): {title[:60]}...")
+            continue
+        if cjk_pat.search(title):
+            print(f"[toc_builder] skip CJK in title: {title[:40]}...")
             continue
         level = it.get("level", 1)
         try:
@@ -266,5 +324,9 @@ async def build_toc(
         if len(expanded) > len(seq):
             seq = expanded
             source = f"{source}+expand"
+
+    # Финальная нормализация: дедуп + сортировка по странице.
+    # Защищает от книг с двумя оглавлениями подряд (краткое + детальное).
+    seq = _dedup_and_order(seq)
 
     return seq, source, ocr_text
