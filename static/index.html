@@ -2,89 +2,275 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <title>Анализатор Книг Pro</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Анализатор книг · PDF/DOCX/TXT → XML</title>
   <style>
+    /* === CSS Variables (light + dark themes) === */
+    :root {
+      --bg: #f4f5f9;
+      --surface: #ffffff;
+      --surface-2: #f8f9fc;
+      --border: #e2e6ee;
+      --text: #1a1a2e;
+      --text-muted: #6b7280;
+      --accent: #4a90e2;
+      --accent-hover: #3a7bd5;
+      --accent-soft: #eaf3fd;
+      --success: #16a34a;
+      --warn-bg: #fff8e1;
+      --warn-border: #f6c244;
+      --warn-text: #7a5c00;
+      --danger: #dc2626;
+      --shadow: 0 4px 20px rgba(0,0,0,0.06);
+      --radius: 12px;
+    }
+    [data-theme="dark"] {
+      --bg: #0f1419;
+      --surface: #1a1f29;
+      --surface-2: #232936;
+      --border: #2c3543;
+      --text: #e6e8eb;
+      --text-muted: #98a2b3;
+      --accent: #5ba0f2;
+      --accent-hover: #7fb5f5;
+      --accent-soft: #1e2a3b;
+      --success: #4ade80;
+      --warn-bg: #3d2f0c;
+      --warn-border: #b07d12;
+      --warn-text: #fbbf24;
+      --danger: #f87171;
+      --shadow: 0 4px 20px rgba(0,0,0,0.4);
+    }
+
     *, *::before, *::after { box-sizing: border-box; }
 
     body {
-      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-      max-width: 960px;
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      max-width: 1080px;
       margin: 0 auto;
       padding: 24px 20px;
-      background: #f0f2f5;
-      color: #1a1a2e;
+      background: var(--bg);
+      color: var(--text);
+      transition: background 0.2s, color 0.2s;
     }
 
-    .container {
-      background: #fff;
-      padding: 32px;
-      border-radius: 14px;
-      box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+    .header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+    .header-text h1 { margin: 0 0 4px; font-size: 22px; font-weight: 600; }
+    .header-text .subtitle { color: var(--text-muted); font-size: 13px; margin: 0; }
+
+    .theme-toggle {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 8px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 18px;
+      line-height: 1;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .theme-toggle:hover { border-color: var(--accent); }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      padding: 24px;
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      margin-bottom: 16px;
     }
 
-    h1 { margin: 0 0 6px; font-size: 22px; font-weight: 600; }
-    .subtitle { color: #666; font-size: 14px; margin: 0 0 28px; }
-
-    /* --- Upload zone --- */
+    /* === Upload === */
     .upload-zone {
-      border: 2px dashed #ccd;
+      border: 2px dashed var(--border);
       border-radius: 10px;
       padding: 28px 20px;
       text-align: center;
       cursor: pointer;
       transition: border-color 0.2s, background 0.2s;
-      margin-bottom: 20px;
     }
     .upload-zone:hover, .upload-zone.drag-over {
-      border-color: #4a90e2;
-      background: #f0f6ff;
+      border-color: var(--accent);
+      background: var(--accent-soft);
     }
     .upload-zone input[type=file] { display: none; }
-    .upload-zone .icon { font-size: 36px; margin-bottom: 8px; }
-    .upload-zone .label { font-size: 15px; color: #555; }
-    .upload-zone .filename { font-size: 13px; color: #4a90e2; margin-top: 6px; font-weight: 500; }
+    .upload-zone .icon { font-size: 36px; margin-bottom: 8px; line-height: 1; }
+    .upload-zone .label { font-size: 15px; color: var(--text); }
+    .upload-zone .hint { font-size: 12px; margin-top: 4px; color: var(--text-muted); }
+    .upload-zone .filename {
+      font-size: 13px; color: var(--accent); margin-top: 8px; font-weight: 500;
+      word-break: break-all;
+    }
 
-    /* --- Controls --- */
-    .controls {
+    /* === Controls === */
+    .controls-row {
       display: flex;
       align-items: center;
       gap: 16px;
-      margin-bottom: 20px;
+      margin-top: 16px;
       flex-wrap: wrap;
     }
 
-    .mode-toggle {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 14px;
-      color: #444;
+    .mode-segment {
+      display: inline-flex;
+      background: var(--surface-2);
+      border-radius: 8px;
+      padding: 3px;
+      border: 1px solid var(--border);
+    }
+    .mode-segment input[type=radio] { display: none; }
+    .mode-segment label {
+      padding: 6px 14px;
       cursor: pointer;
+      font-size: 13px;
+      border-radius: 6px;
+      color: var(--text-muted);
+      transition: all 0.15s;
       user-select: none;
     }
-    .mode-toggle input[type=checkbox] { width: 16px; height: 16px; cursor: pointer; }
+    .mode-segment input:checked + label {
+      background: var(--accent);
+      color: #fff;
+    }
 
+    /* === Advanced options (collapsed) === */
+    .advanced-toggle {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      font-size: 12px;
+      cursor: pointer;
+      padding: 4px 8px;
+      border-radius: 4px;
+      transition: color 0.15s;
+    }
+    .advanced-toggle:hover { color: var(--accent); }
+    .advanced-options {
+      display: none;
+      margin-top: 12px;
+      padding: 12px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+    .advanced-options.open { display: flex; }
+    .advanced-options label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--text);
+      cursor: pointer;
+    }
+    .advanced-options label .hint {
+      color: var(--text-muted);
+      font-size: 11px;
+    }
+
+    /* === Buttons === */
     .btn {
-      padding: 10px 28px;
-      background: #4a90e2;
+      padding: 10px 24px;
+      background: var(--accent);
       color: #fff;
       border: none;
       border-radius: 8px;
-      font-size: 15px;
+      font-size: 14px;
       font-weight: 500;
       cursor: pointer;
-      transition: background 0.15s, transform 0.1s;
+      transition: background 0.15s, transform 0.08s;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
     }
-    .btn:hover:not(:disabled) { background: #3a7bd5; }
+    .btn:hover:not(:disabled) { background: var(--accent-hover); }
     .btn:active:not(:disabled) { transform: scale(0.98); }
-    .btn:disabled { background: #b0bec5; cursor: not-allowed; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-    /* --- Progress --- */
-    #progressContainer { display: none; margin-bottom: 20px; }
-    #statusText { font-size: 13px; color: #555; margin-bottom: 6px; }
+    .btn-danger {
+      background: var(--danger);
+    }
+    .btn-danger:hover:not(:disabled) { background: #b91c1c; filter: brightness(1.1); }
+
+    .btn-sm {
+      padding: 6px 14px;
+      font-size: 12px;
+      background: var(--surface);
+      color: var(--accent);
+      border: 1px solid var(--accent);
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .btn-sm:hover { background: var(--accent-soft); }
+
+    /* === Pipeline visualization === */
+    .pipeline {
+      display: none;
+      margin-top: 16px;
+      gap: 4px;
+      flex-wrap: wrap;
+    }
+    .pipeline.active { display: flex; }
+
+    .stage {
+      flex: 1;
+      min-width: 110px;
+      padding: 8px 10px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 11px;
+      color: var(--text-muted);
+      transition: all 0.2s;
+      position: relative;
+      text-align: center;
+    }
+    .stage .stage-icon { font-size: 14px; display: block; margin-bottom: 2px; }
+    .stage .stage-label { font-weight: 500; }
+    .stage.active {
+      background: var(--accent-soft);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    .stage.done {
+      background: var(--surface);
+      border-color: var(--success);
+      color: var(--success);
+    }
+    .stage.done::after {
+      content: '✓';
+      position: absolute;
+      top: 4px;
+      right: 6px;
+      font-size: 10px;
+    }
+
+    /* === Progress === */
+    #progressArea {
+      display: none;
+      margin-top: 16px;
+    }
+    .progress-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 6px;
+      font-size: 13px;
+    }
+    .progress-status { color: var(--text); }
+    .progress-meta { color: var(--text-muted); font-variant-numeric: tabular-nums; font-size: 12px; }
+
     .progress-bar {
       width: 100%;
-      background: #eee;
+      background: var(--surface-2);
       border-radius: 99px;
       height: 8px;
       overflow: hidden;
@@ -92,111 +278,278 @@
     .progress-fill {
       width: 0%;
       height: 100%;
-      background: linear-gradient(90deg, #4a90e2, #43c6ac);
+      background: linear-gradient(90deg, var(--accent), #43c6ac);
       border-radius: 99px;
       transition: width 0.3s ease;
     }
+    .progress-fill.indeterminate {
+      width: 30%;
+      animation: indeterminate 1.4s ease-in-out infinite;
+    }
+    @keyframes indeterminate {
+      0% { margin-left: -30%; }
+      100% { margin-left: 100%; }
+    }
 
-    /* --- Stats bar --- */
+    /* === Stats === */
     #statsBar {
       display: none;
-      gap: 12px;
-      margin-bottom: 16px;
+      gap: 8px;
+      margin-top: 12px;
       flex-wrap: wrap;
     }
     .stat-pill {
-      background: #f0f4fa;
-      border: 1px solid #dce4f0;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
       border-radius: 99px;
-      padding: 4px 14px;
-      font-size: 13px;
-      color: #444;
+      padding: 4px 12px;
+      font-size: 12px;
+      color: var(--text-muted);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
     }
-    .stat-pill b { color: #2c3e50; }
-    .stat-pill.warn { background: #fff8e1; border-color: #ffe082; color: #7a5c00; }
-    .stat-pill.warn b { color: #5d4037; }
+    .stat-pill b { color: var(--text); font-weight: 600; }
+    .stat-pill.success { background: rgba(22,163,74,0.08); border-color: rgba(22,163,74,0.3); color: var(--success); }
+    .stat-pill.warn { background: var(--warn-bg); border-color: var(--warn-border); color: var(--warn-text); }
+    .stat-pill.info { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
 
-    /* --- Result area --- */
-    textarea {
+    /* === Result === */
+    #resultArea {
       width: 100%;
-      height: 420px;
-      border: 1px solid #ddd;
+      min-height: 420px;
+      max-height: 70vh;
+      border: 1px solid var(--border);
       border-radius: 8px;
       padding: 12px;
-      font-family: 'Courier New', monospace;
+      font-family: 'Consolas', 'Courier New', monospace;
       font-size: 12px;
       resize: vertical;
-      color: #333;
-      background: #fafafa;
+      color: var(--text);
+      background: var(--surface-2);
+      line-height: 1.5;
     }
-    textarea:focus { outline: 2px solid #4a90e2; border-color: transparent; }
+    #resultArea:focus { outline: 2px solid var(--accent); border-color: transparent; }
 
     .result-actions {
       display: flex;
-      gap: 10px;
+      gap: 8px;
       margin-top: 10px;
+      flex-wrap: wrap;
     }
-    .btn-sm {
-      padding: 6px 16px;
+
+    /* === Toast === */
+    .toast-container {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      z-index: 1000;
+      max-width: 380px;
+    }
+    .toast {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--accent);
+      border-radius: 8px;
+      padding: 12px 16px;
       font-size: 13px;
-      background: #fff;
-      color: #4a90e2;
-      border: 1px solid #4a90e2;
-      border-radius: 6px;
+      box-shadow: var(--shadow);
+      animation: slideIn 0.25s ease-out;
       cursor: pointer;
-      transition: background 0.15s;
+      transition: opacity 0.3s, transform 0.3s;
     }
-    .btn-sm:hover { background: #f0f6ff; }
+    .toast.error { border-left-color: var(--danger); }
+    .toast.success { border-left-color: var(--success); }
+    .toast.warn { border-left-color: var(--warn-border); }
+    .toast.fade-out { opacity: 0; transform: translateX(20px); }
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateX(40px); }
+      to { opacity: 1; transform: translateX(0); }
+    }
+
+    /* === Info section about modes === */
+    .info-text {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 8px;
+      line-height: 1.5;
+    }
+    .info-text strong { color: var(--text); }
   </style>
 </head>
 <body>
-<div class="container">
-  <h1>Анализатор технической литературы</h1>
-  <p class="subtitle">PDF, DOCX, TXT → структурированный XML с иерархией разделов</p>
 
-  <!-- Upload zone -->
+<div class="header">
+  <div class="header-text">
+    <h1>Анализатор технической литературы</h1>
+    <p class="subtitle">PDF, DOCX, TXT → структурированный XML с иерархией разделов</p>
+  </div>
+  <button class="theme-toggle" id="themeBtn" onclick="toggleTheme()" title="Сменить тему">🌙</button>
+</div>
+
+<!-- Карточка: загрузка + настройки -->
+<div class="card">
   <div class="upload-zone" id="uploadZone" onclick="document.getElementById('fileInput').click()">
     <div class="icon">📄</div>
     <div class="label">Перетащите файл сюда или нажмите для выбора</div>
-    <div class="label" style="font-size:12px;margin-top:4px;color:#999">PDF, DOCX, TXT · до 150 МБ</div>
+    <div class="hint">PDF, DOCX, TXT · до 150 МБ</div>
     <div class="filename" id="chosenFile"></div>
     <input type="file" id="fileInput" accept=".pdf,.docx,.txt" onchange="onFileChosen(this)">
   </div>
 
-  <!-- Controls -->
-  <div class="controls">
-    <label class="mode-toggle">
-      <input type="checkbox" id="neuralMode">
-      Нейросеть (Qwen 2.5) — точнее для сложных PDF
-    </label>
+  <div class="controls-row">
+    <div class="mode-segment" role="radiogroup">
+      <input type="radio" id="modeFast" name="mode" value="fast" checked>
+      <label for="modeFast">⚡ Быстрый</label>
+      <input type="radio" id="modeNeural" name="mode" value="neural">
+      <label for="modeNeural">🧠 Нейросетевой</label>
+    </div>
     <button class="btn" id="startBtn" onclick="processFile()">Запустить анализ</button>
+    <button class="btn btn-danger" id="cancelBtn" onclick="cancelProcess()" style="display:none;">Отменить</button>
+    <button class="advanced-toggle" onclick="toggleAdvanced()">Расширенные настройки ▾</button>
   </div>
 
-  <!-- Progress -->
-  <div id="progressContainer">
-    <div id="statusText">Подготовка...</div>
+  <div class="advanced-options" id="advancedOptions">
+    <label title="Использовать OCR (glm-ocr) если документ содержит битый текст или сканы">
+      <input type="checkbox" id="optUseOcr" checked>
+      <span>OCR для нечитаемых</span>
+      <span class="hint">(автоматически)</span>
+    </label>
+    <label title="Если в ToC мало секций — попросить LLM найти главы внутри частей по тексту. Медленно.">
+      <input type="checkbox" id="optLlmExpand">
+      <span>LLM-расширение верхнеуровневого ToC</span>
+      <span class="hint">(медленно)</span>
+    </label>
+    <label title="Если оглавление вообще не найдено — LLM проходит по всему тексту chunks и предлагает структуру. ОЧЕНЬ медленно.">
+      <input type="checkbox" id="optDeepScan">
+      <span>Deep-scan (если ToC нет)</span>
+      <span class="hint">(минуты)</span>
+    </label>
+  </div>
+
+  <div class="info-text">
+    <strong>Быстрый режим</strong> — алгоритмический разбор за секунды, без обращения к LLM.
+    <strong>Нейросетевой</strong> — каскад из эвристики + LLM + OCR + embeddings, рекомендуется для сложных PDF.
+  </div>
+</div>
+
+<!-- Карточка: прогресс + статистика -->
+<div class="card" id="progressCard" style="display:none;">
+  <!-- Pipeline stages -->
+  <div class="pipeline" id="pipelineStages">
+    <div class="stage" data-stage="upload"><span class="stage-icon">📤</span><span class="stage-label">Загрузка</span></div>
+    <div class="stage" data-stage="readability"><span class="stage-icon">🔍</span><span class="stage-label">Читаемость</span></div>
+    <div class="stage" data-stage="toc"><span class="stage-icon">📑</span><span class="stage-label">Оглавление</span></div>
+    <div class="stage" data-stage="mapping"><span class="stage-icon">🔗</span><span class="stage-label">Маппинг</span></div>
+    <div class="stage" data-stage="cleaning"><span class="stage-icon">🧹</span><span class="stage-label">Очистка</span></div>
+    <div class="stage" data-stage="done"><span class="stage-icon">✅</span><span class="stage-label">Готово</span></div>
+  </div>
+
+  <div id="progressArea">
+    <div class="progress-header">
+      <span class="progress-status" id="statusText">Подготовка...</span>
+      <span class="progress-meta" id="progressMeta"></span>
+    </div>
     <div class="progress-bar">
       <div id="progressFill" class="progress-fill"></div>
     </div>
   </div>
 
-  <!-- Stats -->
-  <div id="statsBar" style="display:flex"></div>
+  <div id="statsBar"></div>
+</div>
 
-  <!-- Result -->
-  <textarea id="resultArea" placeholder="XML-результат появится здесь..."></textarea>
-
+<!-- Карточка: результат -->
+<div class="card">
+  <textarea id="resultArea" placeholder="XML-результат появится здесь..." spellcheck="false"></textarea>
   <div class="result-actions">
-    <button class="btn-sm" onclick="copyXml()">Скопировать XML</button>
-    <button class="btn-sm" onclick="downloadXml()">Скачать .xml</button>
+    <button class="btn-sm" onclick="copyXml()">📋 Скопировать</button>
+    <button class="btn-sm" onclick="downloadXml()">⬇ Скачать .xml</button>
   </div>
 </div>
 
+<div class="toast-container" id="toastContainer"></div>
+
 <script>
+  // === State ===
   let currentTempId = null;
   let currentOriginalName = null;
+  let currentWebSocket = null;
+  let currentAbortController = null;
+  let startTime = 0;
+  let timerInterval = null;
 
-  // --- Drag & drop ---
+  // === Theme ===
+  const savedTheme = localStorage.getItem('theme') || 'light';
+  document.documentElement.setAttribute('data-theme', savedTheme);
+  document.getElementById('themeBtn').textContent = savedTheme === 'dark' ? '☀️' : '🌙';
+
+  function toggleTheme() {
+    const cur = document.documentElement.getAttribute('data-theme');
+    const next = cur === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    document.getElementById('themeBtn').textContent = next === 'dark' ? '☀️' : '🌙';
+    localStorage.setItem('theme', next);
+  }
+
+  // === Toast ===
+  function toast(message, type = 'info') {
+    const container = document.getElementById('toastContainer');
+    const el = document.createElement('div');
+    el.className = `toast ${type}`;
+    el.textContent = message;
+    el.onclick = () => removeToast(el);
+    container.appendChild(el);
+    setTimeout(() => removeToast(el), type === 'error' ? 6000 : 3500);
+  }
+  function removeToast(el) {
+    el.classList.add('fade-out');
+    setTimeout(() => el.remove(), 300);
+  }
+
+  // === Advanced toggle ===
+  function toggleAdvanced() {
+    document.getElementById('advancedOptions').classList.toggle('open');
+  }
+
+  // === Pipeline stage helpers ===
+  function setStage(stage, state /* 'active' | 'done' */) {
+    document.querySelectorAll('.stage').forEach(el => {
+      if (el.dataset.stage === stage) {
+        el.classList.remove('active', 'done');
+        el.classList.add(state);
+      }
+    });
+  }
+  function markStagesDoneUpTo(stage) {
+    const order = ['upload', 'readability', 'toc', 'mapping', 'cleaning', 'done'];
+    const idx = order.indexOf(stage);
+    order.slice(0, idx).forEach(s => {
+      const el = document.querySelector(`.stage[data-stage="${s}"]`);
+      if (el && !el.classList.contains('done')) {
+        el.classList.remove('active');
+        el.classList.add('done');
+      }
+    });
+  }
+  function resetStages() {
+    document.querySelectorAll('.stage').forEach(el => {
+      el.classList.remove('active', 'done');
+    });
+  }
+
+  function inferStageFromMessage(message) {
+    const m = message.toLowerCase();
+    if (m.includes('читаем')) return 'readability';
+    if (m.includes('оглавл') || m.includes('ocr') || m.includes('toc') || m.includes('deep')) return 'toc';
+    if (m.includes('маппинг') || m.includes('rescue')) return 'mapping';
+    if (m.includes('llm') || m.includes('алгоритм') || m.includes('формирование')) return 'cleaning';
+    return null;
+  }
+
+  // === Drag & drop ===
   const zone = document.getElementById('uploadZone');
   zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag-over'); });
   zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
@@ -212,153 +565,287 @@
   }
 
   function setFile(file) {
-    document.getElementById('chosenFile').textContent = `✓ ${file.name}`;
-    // Сбрасываем предыдущий temp_id при выборе нового файла
+    const sizeMB = (file.size / 1024 / 1024).toFixed(1);
+    document.getElementById('chosenFile').textContent = `✓ ${file.name} (${sizeMB} МБ)`;
     currentTempId = null;
     currentOriginalName = file.name;
-    document.getElementById('fileInput').files; // просто держим ref
-    // Перевешиваем файл на input для FormData
     const dt = new DataTransfer();
     dt.items.add(file);
     document.getElementById('fileInput').files = dt.files;
   }
 
-  // --- Основная логика ---
+  // === Timer ===
+  function startTimer() {
+    startTime = Date.now();
+    const meta = document.getElementById('progressMeta');
+    timerInterval = setInterval(() => {
+      const sec = Math.floor((Date.now() - startTime) / 1000);
+      const mm = Math.floor(sec / 60);
+      const ss = sec % 60;
+      meta.textContent = mm > 0 ? `${mm}м ${ss}с` : `${ss}с`;
+    }, 200);
+  }
+  function stopTimer() {
+    if (timerInterval) clearInterval(timerInterval);
+    timerInterval = null;
+  }
+
+  // === Main flow ===
   async function processFile() {
     const fileInput = document.getElementById('fileInput');
-    const isNeural = document.getElementById('neuralMode').checked;
+    const isNeural = document.getElementById('modeNeural').checked;
     const file = fileInput.files[0];
-    if (!file) return alert('Выберите файл');
+    if (!file) { toast('Выберите файл', 'warn'); return; }
 
-    const btn = document.getElementById('startBtn');
+    const startBtn = document.getElementById('startBtn');
+    const cancelBtn = document.getElementById('cancelBtn');
     const resultArea = document.getElementById('resultArea');
-    const progressContainer = document.getElementById('progressContainer');
+    const progressCard = document.getElementById('progressCard');
+    const progressArea = document.getElementById('progressArea');
     const progressFill = document.getElementById('progressFill');
     const statusText = document.getElementById('statusText');
     const statsBar = document.getElementById('statsBar');
+    const pipeline = document.getElementById('pipelineStages');
 
-    btn.disabled = true;
+    startBtn.disabled = true;
+    cancelBtn.style.display = isNeural ? 'inline-flex' : 'none';
+    resultArea.value = '';
     statsBar.style.display = 'none';
     statsBar.innerHTML = '';
-    resultArea.value = '';
-    progressContainer.style.display = 'block';
+    progressCard.style.display = 'block';
+    progressArea.style.display = 'block';
+    pipeline.classList.toggle('active', isNeural);
+    resetStages();
     progressFill.style.width = '0%';
     statusText.textContent = 'Загрузка файла...';
+    setStage('upload', 'active');
+    startTimer();
+
+    currentAbortController = new AbortController();
 
     try {
-      // ШАГ 1: загружаем файл, получаем temp_id
+      // === Загрузка ===
       const formData = new FormData();
       formData.append('file', file);
-      const uploadRes = await fetch('/upload', { method: 'POST', body: formData });
+      const uploadRes = await fetch('/upload', {
+        method: 'POST',
+        body: formData,
+        signal: currentAbortController.signal,
+      });
       if (!uploadRes.ok) {
-        const err = await uploadRes.json();
-        throw new Error(err.detail || 'Ошибка загрузки');
+        const err = await uploadRes.json().catch(() => ({}));
+        throw new Error(err.detail || `Ошибка загрузки (HTTP ${uploadRes.status})`);
       }
       const { temp_id, original_name } = await uploadRes.json();
       currentTempId = temp_id;
       currentOriginalName = original_name;
 
+      setStage('upload', 'done');
       progressFill.style.width = '5%';
-      statusText.textContent = 'Файл загружен. Анализируем...';
+      statusText.textContent = 'Файл загружен, анализируем...';
 
       if (!isNeural) {
-        // --- Быстрый режим ---
-        const res = await fetch(`/analyze/fast?temp_id=${encodeURIComponent(temp_id)}`, { method: 'POST' });
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          throw new Error(err.detail || `HTTP ${res.status}`);
-        }
-        const xml = await res.text();
-        resultArea.value = xml;
-        progressFill.style.width = '100%';
-        statusText.textContent = '✓ Готово (алгоритм)';
-        btn.disabled = false;
-
+        await runFastMode(temp_id);
       } else {
-        // --- Neural режим (WebSocket) ---
-        const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const ws = new WebSocket(`${protocol}//${location.host}/ws/analyze`);
-
-        ws.onopen = () => ws.send(JSON.stringify({ temp_id }));
-
-        ws.onmessage = (e) => {
-          const data = JSON.parse(e.data);
-
-          if (data.type === 'progress') {
-            progressFill.style.width = data.percent + '%';
-            statusText.textContent = `${data.percent}% — ${data.message}`;
-
-          } else if (data.type === 'complete') {
-            resultArea.value = data.xml;
-            progressFill.style.width = '100%';
-            statusText.textContent = '✓ Готово (нейросеть)';
-            btn.disabled = false;
-
-            // Показываем статистику confidence
-            if (data.stats) showStats(data.stats);
-            ws.close();
-
-          } else if (data.type === 'error') {
-            alert('Ошибка: ' + data.message);
-            btn.disabled = false;
-            ws.close();
-          }
-        };
-
-        ws.onerror = () => {
-          alert('Ошибка WebSocket. Убедитесь, что установлен пакет websockets.');
-          btn.disabled = false;
-        };
+        await runNeuralMode(temp_id);
       }
 
     } catch (err) {
-      alert('Ошибка: ' + err.message);
-      btn.disabled = false;
-      progressContainer.style.display = 'none';
+      if (err.name === 'AbortError') {
+        toast('Запрос отменён', 'warn');
+        statusText.textContent = 'Отменено';
+      } else {
+        toast('Ошибка: ' + err.message, 'error');
+        statusText.textContent = '✗ ' + err.message;
+      }
+    } finally {
+      stopTimer();
+      startBtn.disabled = false;
+      cancelBtn.style.display = 'none';
+      currentAbortController = null;
+      currentWebSocket = null;
     }
   }
 
+  async function runFastMode(temp_id) {
+    setStage('toc', 'active');
+    const res = await fetch(`/analyze/fast?temp_id=${encodeURIComponent(temp_id)}`, {
+      method: 'POST',
+      signal: currentAbortController.signal,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${res.status}`);
+    }
+    const xml = await res.text();
+    document.getElementById('resultArea').value = xml;
+    document.getElementById('progressFill').style.width = '100%';
+    document.getElementById('statusText').textContent = '✓ Готово (алгоритм)';
+    markStagesDoneUpTo('done');
+    setStage('done', 'done');
+    toast('Готово!', 'success');
+  }
+
+  function runNeuralMode(temp_id) {
+    return new Promise((resolve, reject) => {
+      const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const ws = new WebSocket(`${protocol}//${location.host}/ws/analyze`);
+      currentWebSocket = ws;
+
+      // Отслеживаем отмену через AbortController
+      currentAbortController.signal.addEventListener('abort', () => {
+        try { ws.close(1000, 'cancelled by user'); } catch (e) {}
+        reject(new DOMException('Aborted', 'AbortError'));
+      });
+
+      ws.onopen = () => ws.send(JSON.stringify({
+        temp_id,
+        use_ocr: document.getElementById('optUseOcr').checked,
+        deep_scan: document.getElementById('optDeepScan').checked,
+        llm_expand: document.getElementById('optLlmExpand').checked,
+      }));
+
+      ws.onmessage = (e) => {
+        let data;
+        try { data = JSON.parse(e.data); } catch { return; }
+
+        if (data.type === 'progress') {
+          const pct = Math.max(5, Math.min(99, data.percent));
+          document.getElementById('progressFill').style.width = pct + '%';
+          document.getElementById('statusText').textContent = data.message;
+
+          // Подсветка соответствующей стадии pipeline
+          const stage = inferStageFromMessage(data.message);
+          if (stage) {
+            markStagesDoneUpTo(stage);
+            setStage(stage, 'active');
+          }
+
+        } else if (data.type === 'complete') {
+          document.getElementById('resultArea').value = data.xml;
+          document.getElementById('progressFill').style.width = '100%';
+          document.getElementById('statusText').textContent = '✓ Готово (нейросеть)';
+          markStagesDoneUpTo('done');
+          setStage('done', 'done');
+          if (data.stats) showStats(data.stats);
+          toast('Готово!', 'success');
+          ws.close();
+          resolve();
+
+        } else if (data.type === 'error') {
+          ws.close();
+          reject(new Error(data.message));
+        }
+      };
+
+      ws.onerror = () => reject(new Error('WebSocket-соединение прервано'));
+    });
+  }
+
+  function cancelProcess() {
+    if (currentAbortController) {
+      currentAbortController.abort();
+    }
+    if (currentWebSocket && currentWebSocket.readyState === WebSocket.OPEN) {
+      try { currentWebSocket.close(1000, 'cancelled'); } catch (e) {}
+    }
+  }
+
+  // === Stats panel ===
   function showStats(stats) {
     const bar = document.getElementById('statsBar');
-    const lowConf = stats.low_confidence_sections || 0;
 
     if (stats.unreadable) {
       bar.innerHTML = `
         <span class="stat-pill warn" style="flex:1">
           ⚠ <b>Документ нечитаем</b> — текст содержит артефакты OCR.
-          Попробуйте конвертировать PDF в читаемый формат или используйте OCR-инструменты.
+          Попробуйте конвертировать PDF в читаемый формат, или включите OCR в расширенных настройках.
         </span>
       `;
       bar.style.display = 'flex';
       return;
     }
 
-    bar.innerHTML = `
-      <span class="stat-pill">Разделов: <b>${stats.total_sections}</b></span>
-      <span class="stat-pill">Средний confidence: <b>${(stats.avg_confidence * 100).toFixed(0)}%</b></span>
-      <span class="stat-pill ${lowConf > 0 ? 'warn' : ''}">
-        Нечёткий маппинг: <b>${lowConf}</b> ${lowConf > 0 ? '⚠' : '✓'}
-      </span>
-    `;
+    const pills = [];
+    pills.push(`<span class="stat-pill"><span>Разделов:</span> <b>${stats.total_sections}</b></span>`);
+
+    if (stats.real_content_sections !== undefined && stats.real_content_sections !== stats.total_sections) {
+      pills.push(`<span class="stat-pill"><span>С реальным контентом:</span> <b>${stats.real_content_sections}</b></span>`);
+    }
+
+    const conf = Math.round((stats.avg_confidence || 0) * 100);
+    const confClass = conf >= 85 ? 'success' : conf >= 60 ? '' : 'warn';
+    pills.push(`<span class="stat-pill ${confClass}"><span>Confidence:</span> <b>${conf}%</b></span>`);
+
+    // Источник ToC
+    const sourceLabels = {
+      heuristic: '📐 Эвристика',
+      llm: '🧠 LLM',
+      ocr_heuristic: '🔍 OCR + эвристика',
+      ocr_llm: '🔍 OCR + LLM',
+      deep_scan: '🧠 Deep-scan',
+    };
+    let srcLabel = sourceLabels[stats.toc_source];
+    if (!srcLabel && stats.toc_source) srcLabel = stats.toc_source;
+    if (srcLabel) {
+      pills.push(`<span class="stat-pill info"><span>ToC:</span> <b>${srcLabel}</b></span>`);
+    }
+
+    if (stats.ocr_used) {
+      pills.push(`<span class="stat-pill info">🔍 OCR использован</span>`);
+    }
+
+    const rescued = (stats.rescued_page_hint || 0) + (stats.rescued_embedding || 0) + (stats.rescued_llm || 0);
+    if (rescued > 0) {
+      pills.push(`<span class="stat-pill success"><span>Спасено rescue:</span> <b>${rescued}</b></span>`);
+    }
+
+    const reverted = (stats.reverted_in_toc || 0) + (stats.reverted_out_of_order || 0);
+    if (reverted > 0) {
+      pills.push(`<span class="stat-pill warn"><span>Отвергнуто verify:</span> <b>${reverted}</b></span>`);
+    }
+
+    const lowConf = stats.low_confidence_sections || 0;
+    if (lowConf > 0) {
+      pills.push(`<span class="stat-pill warn"><span>Низкий confidence:</span> <b>${lowConf}</b></span>`);
+    }
+
+    bar.innerHTML = pills.join('');
     bar.style.display = 'flex';
   }
 
+  // === Copy / Download ===
   function copyXml() {
     const text = document.getElementById('resultArea').value;
-    if (!text) return;
-    navigator.clipboard.writeText(text).then(() => alert('Скопировано!'));
+    if (!text) return toast('Нечего копировать', 'warn');
+    navigator.clipboard.writeText(text)
+      .then(() => toast('XML скопирован', 'success'))
+      .catch(() => toast('Не удалось скопировать', 'error'));
   }
 
   function downloadXml() {
     const text = document.getElementById('resultArea').value;
-    if (!text) return;
+    if (!text) return toast('Нечего скачивать', 'warn');
     const name = (currentOriginalName || 'result').replace(/\.[^.]+$/, '') + '.xml';
     const blob = new Blob([text], { type: 'application/xml' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = name;
     a.click();
+    URL.revokeObjectURL(a.href);
+    toast(`Скачивается ${name}`, 'success');
   }
+
+  // Keyboard: Ctrl+Enter — запуск
+  document.addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      e.preventDefault();
+      if (!document.getElementById('startBtn').disabled) processFile();
+    }
+    if (e.key === 'Escape' && document.getElementById('cancelBtn').style.display !== 'none') {
+      cancelProcess();
+    }
+  });
 </script>
 </body>
 </html>

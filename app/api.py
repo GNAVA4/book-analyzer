@@ -102,6 +102,7 @@ async def websocket_analyze(websocket: WebSocket):
         temp_id = data.get("temp_id")
         deep_scan = bool(data.get("deep_scan", False))
         use_ocr = bool(data.get("use_ocr", True))
+        llm_expand = bool(data.get("llm_expand", False))
 
         if not temp_id:
             await websocket.send_json({"type": "error", "message": "temp_id не передан"})
@@ -120,10 +121,23 @@ async def websocket_analyze(websocket: WebSocket):
             progress_callback=send_status,
             deep_scan=deep_scan,
             use_ocr=use_ocr,
+            llm_expand=llm_expand,
         )
+
+        # Подсчитываем сколько секций спасены и сколько отвергнуты verification
+        def strat_count(prefix: str) -> int:
+            return sum(1 for n in flat_nodes if (n.get('match_strategy') or '').startswith(prefix))
+
+        rescued_page = strat_count('page_hint')
+        rescued_emb = strat_count('embedding_rescue')
+        rescued_llm = strat_count('llm_rescue')
+        reverted_toc = strat_count('reverted_in_toc')
+        reverted_order = strat_count('reverted_out_of_order')
+        real_content = sum(1 for n in flat_nodes if n.get('content') and len(n.get('content', '')) > 100)
 
         stats = {
             "total_sections": len(flat_nodes),
+            "real_content_sections": real_content,
             "avg_confidence": round(
                 sum(n.get('confidence', 1.0) for n in flat_nodes) / max(len(flat_nodes), 1),
                 3
@@ -131,6 +145,11 @@ async def websocket_analyze(websocket: WebSocket):
             "low_confidence_sections": sum(
                 1 for n in flat_nodes if n.get('confidence', 1.0) < 0.80
             ),
+            "rescued_page_hint": rescued_page,
+            "rescued_embedding": rescued_emb,
+            "rescued_llm": rescued_llm,
+            "reverted_in_toc": reverted_toc,
+            "reverted_out_of_order": reverted_order,
             "unreadable": any(
                 "НЕЧИТАЕМ" in n.get('content', '') for n in flat_nodes
             ),
