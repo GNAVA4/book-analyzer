@@ -45,6 +45,26 @@ class TestLooksLikeToc:
         )
         assert _looks_like_toc_content(text) is False
 
+    def test_dotted_with_spaces_detected(self):
+        """Книги где точки разнесены пробелами (стиль Кенига)."""
+        text = (
+            "Содержание.  .  .  .  .  .  .  .  .  .  .  .  6\n"
+            "Предисловие.  .  .  .  .  .  .  .  .  .  .  7\n"
+            "Об авторе.  .  .  .  .  .  .  .  .  .  .  .  10\n"
+            "Введение.  .  .  .  .  .  .  .  .  .  .  .  11\n"
+        )
+        assert _looks_like_toc_content(text) is True
+
+    def test_dash_leaders_detected(self):
+        """Лидеры в виде тире вместо точек."""
+        text = (
+            "Введение ———————————— 5\n"
+            "Глава 1 ———————————————— 10\n"
+            "Глава 2 ———————————————— 20\n"
+            "Глава 3 ———————————————— 30\n"
+        )
+        assert _looks_like_toc_content(text) is True
+
     def test_too_few_lines_returns_false(self):
         """Меньше 3 строк — не определяется."""
         assert _looks_like_toc_content("a\nb") is False
