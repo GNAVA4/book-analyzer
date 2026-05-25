@@ -84,13 +84,15 @@ def dict_to_xml(data: dict, toc_items: list = None) -> str:
             return "1.00"
 
     def create_element(node: dict) -> ET.Element:
+        # Очищаем title/content от управляющих символов на финальной стадии —
+        # защита от случая, когда узлы пришли не через build_tree_structure.
         elem = ET.Element(
             "section",
-            title=node.get('title', ''),
+            title=clean_xml_string(str(node.get('title', ''))),
             page=_fmt_page(node.get('page')),
             confidence=_fmt_conf(node.get('confidence', 1.0)),
         )
-        content = node.get('content', '')
+        content = clean_xml_string(str(node.get('content', '')))
         if content and content.strip():
             content_elem = ET.SubElement(elem, "content")
             content_elem.text = content

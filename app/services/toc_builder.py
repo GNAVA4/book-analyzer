@@ -227,11 +227,20 @@ def _max_page(sequence: list) -> int:
 
 
 def _is_high_level_only(sequence: list) -> bool:
-    """True если sequence содержит только верхнеуровневые пункты — мало уровней 2/3."""
+    """
+    True если sequence содержит в основном верхнеуровневые пункты с малым
+    количеством детализации.
+
+    Условие чуть мягче чем «вообще нет уровней 2+»: допускаем одну-две
+    «хвостовые» секции уровня 2 (например, «Примечания» как level 2),
+    но если глав внутри частей нет — все ещё считаем high-level-only.
+    """
     if len(sequence) > TOC_HIGH_LEVEL_THRESHOLD:
         return False
     deeper = sum(1 for s in sequence if s.get('level', 1) > 1)
-    return deeper == 0
+    # Если глубоких секций >= 30% от общего числа — это уже нормальный ToC,
+    # не нужно ничего расширять.
+    return deeper / max(len(sequence), 1) < 0.3
 
 
 # --- Главный pipeline --------------------------------------------------------
@@ -318,6 +327,10 @@ async def build_toc(
             source = "deep_scan"
 
     # --- Уровень 6: LLM-expansion для верхнеуровневого ToC ---
+    # Если пользователь явно включил флаг — расширяем всегда (даже когда
+    # _is_high_level_only говорит «нет»), чтобы поведение было предсказуемым.
+    # Если флаг по умолчанию (включён внутри функцией), то расширяем только
+    # когда видим высокоуровневый ToC.
     if enable_llm_expand and _is_high_level_only(seq):
         full_text = full_text_extractor() if not ocr_text else ocr_text
         expanded = await _llm_expand_parts(seq, full_text, progress_cb)

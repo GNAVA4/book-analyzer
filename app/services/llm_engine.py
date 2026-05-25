@@ -9,16 +9,23 @@ from openai import AsyncOpenAI
 # ---------------------------------------------------------------------------
 
 LLM_MODEL = "qwen2.5-7b-instruct"      # non-reasoning, отвечает в content
-LLM_CHUNK_SIZE = 2_500             # максимальный размер одного чанка (символов).
-                                   # Под 4096-token context qwen2.5-7b. Для моделей
-                                   # с увеличенным контекстом можно поднять.
+LLM_CHUNK_SIZE = 1_500             # максимальный размер одного чанка (символов).
+                                   # Снижен с 2500 до 1500: при больших промптах с
+                                   # языковыми guard-инструкциями выходило за 4096
+                                   # context window LM Studio. С 1500 chunk + 500 tokens
+                                   # промпта + 1024 ответ влезает с запасом.
 LLM_BOUNDARY_CONTEXT = 600        # сколько символов даём LLM для уточнения границы
 LLM_MAX_PARALLEL = 3              # максимум параллельных вызовов к LM Studio/Ollama
 LLM_MAX_TOKENS = 1_024            # ответ обычно меньше; запас на reasoning-модели
 
 # Доля чужеземных символов (CJK, арабский, иврит, корейский) — выше этого
 # текст считаем галлюцинацией LLM («переводит» русский в китайский).
-FOREIGN_CHAR_LIMIT = 0.05
+# Поднизили с 5% до 1% — даже один иероглиф в коротком ответе видим сразу.
+FOREIGN_CHAR_LIMIT = 0.01
+# Дополнительный абсолютный порог: если в ответе >= этого числа CJK-символов,
+# срабатывает независимо от длины. Защищает от случая когда LLM возвращает
+# огромный ответ с десятком китайских вкраплений (доля низкая, но проблема есть).
+FOREIGN_CHAR_ABS_LIMIT = 5
 
 # Регэксп для детекции чужих письменностей в русско-/латиноязычном тексте.
 # CJK + хирагана/катакана + арабский + иврит + корейский.
@@ -33,6 +40,28 @@ def detect_foreign_script(text: str) -> float:
         return 0.0
     foreign = len(_FOREIGN_SCRIPTS.findall(text))
     return foreign / max(len(text), 1)
+
+
+def count_foreign_chars(text: str) -> int:
+    """Абсолютное число CJK/арабских символов в тексте."""
+    if not text:
+        return 0
+    return len(_FOREIGN_SCRIPTS.findall(text))
+
+
+def has_foreign_script(text: str) -> bool:
+    """
+    Главный детектор: возвращает True если в тексте есть подозрительная
+    доля иностранных символов ИЛИ хотя бы FOREIGN_CHAR_ABS_LIMIT штук.
+
+    Используется в clean_text_fragment для решения о retry.
+    """
+    if not text:
+        return False
+    n = count_foreign_chars(text)
+    if n >= FOREIGN_CHAR_ABS_LIMIT:
+        return True
+    return (n / max(len(text), 1)) > FOREIGN_CHAR_LIMIT
 
 # Фразы-маркеры, которые LLM добавляет вопреки инструкциям.
 # Строки с этих фраз в начале ответа будут обрезаны.
@@ -375,12 +404,15 @@ class LLMEngine:
 
             # Защита от языковых галлюцинаций: если LLM ответила
             # китайским/арабским/иврит/корейским — повторить с retry-промптом.
-            if detect_foreign_script(result) > FOREIGN_CHAR_LIMIT:
-                print(f"[LLM clean] Foreign script detected ({detect_foreign_script(result):.1%}), retrying...")
+            # Срабатывает даже на единичные иероглифы (см. has_foreign_script).
+            if has_foreign_script(result):
+                n = count_foreign_chars(result)
+                print(f"[LLM clean] Foreign script: {n} chars, retrying...")
                 retry_prompt = (
                     f"КРИТИЧЕСКАЯ ОШИБКА: предыдущий ответ содержал иероглифы. "
                     f"Повтори очистку текста СТРОГО на {target_lang.upper()} ЯЗЫКЕ. "
                     "Никакого китайского/арабского/японского/корейского. "
+                    "Ни одного иностранного символа. "
                     "Только буквы целевого языка, цифры и стандартная пунктуация.\n\n"
                     + base_prompt
                 )
@@ -388,7 +420,7 @@ class LLMEngine:
                 result = postprocess_llm_output(raw)
 
                 # Если и повтор содержит чужие символы — возвращаем оригинал
-                if detect_foreign_script(result) > FOREIGN_CHAR_LIMIT:
+                if has_foreign_script(result):
                     print("[LLM clean] Retry also failed, returning original text")
                     return text
 
