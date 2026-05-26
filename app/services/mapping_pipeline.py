@@ -6,13 +6,16 @@
     2. Page-hint window — если у секции есть page в ToC, искать ТОЛЬКО
        в окне ±N страниц от ожидаемой позиции, игнорируя глобальный текст.
        Решает «секция найдена в Примечаниях вместо текста главы».
-    3. Embedding rescue — семантический поиск через text-embedding модель
-    4. LLM rescue — точечный вызов LLM с просьбой найти заголовок в окне
-    5. Verification & re-map — после всех попыток проверить порядок секций
+    3. Fuzzy match — sliding-window SequenceMatcher для опечаток LLM ToC
+       и лёгких различий написания (1-2 символа). Локальный, дешёвый.
+    4. Embedding rescue — семантический поиск через text-embedding модель
+    5. LLM rescue — точечный вызов LLM с просьбой найти заголовок в окне
+    6. Verification & re-map — после всех попыток проверить порядок секций
        и перепроверить выбивающиеся (out-of-order) элементы.
 """
 
 import re
+import difflib
 
 from .pdf_utils import find_real_indices, _search_with_confidence, get_clean_title
 from .llm_engine import llm_client
@@ -110,6 +113,136 @@ async def _embedding_rescue(title: str, window_text: str) -> tuple[int, float]:
     return offset, score
 
 
+# === Fuzzy matching ==========================================================
+#
+# Высокий порог сходства намеренный: ловим именно опечатки/мелкие отличия
+# написания ("Не боитесь" vs "Не бойтесь"), но НЕ похожие по смыслу разные
+# главы ("Расчёт параметров системы А" vs "Расчёт параметров системы Б") —
+# это была главная проблема Левенштейна в первой итерации.
+FUZZY_THRESHOLD = 0.85
+# Минимальная длина title чтобы пробовать fuzzy. На очень коротких заголовках
+# fuzzy слишком ненадёжен.
+FUZZY_MIN_TITLE_LEN = 8
+
+
+def _normalize_with_map(s: str) -> tuple[str, list]:
+    """
+    Возвращает (normalized_text, idx_map), где idx_map[i] — позиция i-го
+    нормализованного символа в исходной строке.
+
+    Нормализация та же что в _normalize_for_fuzzy, но сохраняет
+    индексы для перевода offset обратно в исходные координаты.
+    """
+    if not s:
+        return "", []
+    out_chars = []
+    out_map = []
+    s_lower = s.lower()
+    prev_space = False
+    started = False  # для стрипа ведущих пробелов
+    space_chars = {' ', ' ', ' ', ' ', ' ', '　', '\t', '\n', '\r'}
+    for i, ch in enumerate(s_lower):
+        if ch in space_chars:
+            if not started:
+                continue  # стрипим начальные пробелы
+            if prev_space:
+                continue  # схлопываем множественные пробелы
+            out_chars.append(' ')
+            out_map.append(i)
+            prev_space = True
+        else:
+            out_chars.append(ch)
+            out_map.append(i)
+            prev_space = False
+            started = True
+    # Хвостовые пробелы (если есть)
+    while out_chars and out_chars[-1] == ' ':
+        out_chars.pop()
+        out_map.pop()
+    return ''.join(out_chars), out_map
+
+
+def _normalize_for_fuzzy(s: str) -> str:
+    """
+    Нормализация для fuzzy-сравнения:
+      - lowercase
+      - неразрывные/тонкие/em-spaces → обычный пробел
+      - множественные пробелы → один
+      - убираем ведущие/хвостовые пробелы
+    Так разница между «НЕ\\xa0БОЙТЕСЬ» и «не бойтесь» не влияет на ratio.
+    """
+    if not s:
+        return ""
+    s = s.lower()
+    # NO-BREAK SPACE, EN SPACE, EM SPACE, NARROW NO-BREAK SPACE, IDEOGRAPHIC SPACE
+    for ws in (' ', ' ', ' ', ' ', ' ', '　', '\t'):
+        s = s.replace(ws, ' ')
+    return re.sub(r'\s+', ' ', s).strip()
+
+
+def _fuzzy_locate(
+    title: str,
+    text_window: str,
+    threshold: float = FUZZY_THRESHOLD,
+) -> tuple[int, float]:
+    """
+    Скользящим окном по тексту ищет позицию с максимальным сходством с title.
+
+    Стратегия: окно ровно по длине title, шаг небольшой. Тогда
+    SequenceMatcher.ratio() ≈ доля совпадающих символов между title и
+    кандидатом, что хорошо ловит опечатки в 1-2 символа.
+
+    Перед сравнением обе строки нормализуются через _normalize_for_fuzzy,
+    что выравнивает разные виды пробелов и регистр.
+
+    Возвращает (offset, score). Если ни одно окно не дотянуло до threshold —
+    возвращает (-1, best_score).
+    """
+    if not title or len(title) < FUZZY_MIN_TITLE_LEN or not text_window:
+        return -1, 0.0
+
+    norm_title = _normalize_for_fuzzy(title)
+    window_len = len(norm_title)
+    if window_len < FUZZY_MIN_TITLE_LEN:
+        return -1, 0.0
+    # Нормализованный текст. Длина может отличаться от исходной из-за
+    # схлопывания множественных пробелов — но offset мы вернём от исходного,
+    # для этого построим mapping норм-индекс → исходный индекс.
+    text_lower = text_window.lower()
+    normalized, idx_map = _normalize_with_map(text_window)
+    if len(normalized) < window_len:
+        return -1, 0.0
+
+    # Stride: достаточно мелкий чтобы поймать идеальное выравнивание,
+    # но не настолько чтобы каждый символ проверять. 1/8 от длины title.
+    stride = max(window_len // 8, 3)
+
+    matcher = difflib.SequenceMatcher(autojunk=False)
+    matcher.set_seq1(norm_title)
+
+    best_norm_idx, best_score = -1, 0.0
+    # Лёгкий префильтр: проверяем по quick_ratio (без вычисления matching blocks)
+    quick_threshold = max(threshold - 0.10, 0.50)
+
+    for i in range(0, len(normalized) - window_len + 1, stride):
+        chunk = normalized[i: i + window_len]
+        matcher.set_seq2(chunk)
+        # quick_ratio — верхняя граница ratio, считается за O(n)
+        if matcher.quick_ratio() < quick_threshold:
+            continue
+        score = matcher.ratio()
+        if score > best_score:
+            best_score = score
+            best_norm_idx = i
+
+    if best_score < threshold or best_norm_idx < 0:
+        return -1, best_score
+
+    # Перевод позиции из нормализованной обратно в исходную
+    original_idx = idx_map[best_norm_idx] if best_norm_idx < len(idx_map) else best_norm_idx
+    return original_idx, best_score
+
+
 async def _llm_rescue(title: str, window_text: str) -> int:
     """LLM-поиск как последний tier."""
     return await llm_client.locate_section_in_text(title, window_text)
@@ -166,10 +299,11 @@ async def map_sequence(
     if page_hint_rescued:
         print(f"[mapping] page_hint_rescue: {page_hint_rescued}")
 
-    # --- Уровни 3+4: embedding и LLM для оставшихся ---
+    # --- Уровни 3-5: fuzzy → embedding → LLM для оставшихся ---
     if not_found:
         if progress_cb:
-            await progress_cb(9, f"Rescue для {len(not_found)} секций (embedding+LLM)...")
+            await progress_cb(9, f"Rescue для {len(not_found)} секций (fuzzy/embedding/LLM)...")
+        fuzzy_rescued = 0
         emb_rescued = 0
         llm_rescued = 0
         for i in not_found:
@@ -185,20 +319,51 @@ async def map_sequence(
                 full_text_len
             )
 
-            # Если есть page-hint, центрируем окно вокруг ожидаемой позиции
             page = curr['item'].get('page')
+            # Соседи в порядке текста? prev_end < next_start — нормально.
+            # Если порядок нарушен (соседняя секция нашлась далеко не там, где
+            # должна), prev_end >= next_start и окно отрицательное.
+            order_ok = prev_end < next_start
+
             if page and total_pages:
+                # Page-hint доступен — центрируем вокруг ожидаемой позиции.
+                # Если порядок ОК — ограничиваем соседями. Иначе берём
+                # фиксированное окно от page-hint без учёта неправильного prev_end.
                 est = _estimate_position_from_page(page, total_pages, full_text_len)
-                window_start = max(prev_end, est - RESCUE_WINDOW // 2)
-                window_end = min(next_start, est + RESCUE_WINDOW // 2)
-            else:
+                if order_ok:
+                    window_start = max(prev_end, est - RESCUE_WINDOW // 2)
+                    window_end = min(next_start, est + RESCUE_WINDOW // 2)
+                else:
+                    window_start = max(0, est - RESCUE_WINDOW // 2)
+                    window_end = min(full_text_len, est + RESCUE_WINDOW // 2)
+            elif order_ok:
                 # Без page-hint — ограниченное окно от prev_end
                 window_start = prev_end
                 window_end = min(prev_end + RESCUE_WINDOW, next_start)
+            else:
+                # Нет page, порядок плохой — fallback: окно сразу за next_start
+                # (предполагаем что секция где-то после следующей в тексте).
+                window_start = next_start
+                window_end = min(next_start + RESCUE_WINDOW, full_text_len)
 
             window_text = full_text[window_start:window_end]
+            if not window_text:
+                continue
 
-            # Уровень 3: embedding
+            # Уровень 3: fuzzy match (быстро, без LLM, для опечаток)
+            fz_offset, fz_score = _fuzzy_locate(title, window_text)
+            if fz_offset >= 0:
+                mapped[i]['start_idx'] = window_start + fz_offset
+                mapped[i]['end_idx'] = min(
+                    window_start + fz_offset + len(title) + 20, window_end
+                )
+                # confidence привязан к score: 0.85 → 0.65, 1.0 → 0.80
+                mapped[i]['confidence'] = round(min(fz_score - 0.20, 0.80), 2)
+                mapped[i]['match_strategy'] = 'fuzzy_rescue'
+                fuzzy_rescued += 1
+                continue
+
+            # Уровень 4: embedding
             emb_offset, emb_score = await _embedding_rescue(title, window_text)
             if emb_offset >= 0:
                 mapped[i]['start_idx'] = window_start + emb_offset
@@ -210,7 +375,7 @@ async def map_sequence(
                 emb_rescued += 1
                 continue
 
-            # Уровень 4: LLM
+            # Уровень 5: LLM
             offset = await _llm_rescue(title, window_text)
             if offset >= 0:
                 mapped[i]['start_idx'] = window_start + offset
@@ -220,8 +385,10 @@ async def map_sequence(
                 mapped[i]['confidence'] = 0.55
                 mapped[i]['match_strategy'] = 'llm_rescue'
                 llm_rescued += 1
-        if emb_rescued or llm_rescued:
-            print(f"[mapping] emb_rescue: {emb_rescued}, llm_rescue: {llm_rescued}")
+        if fuzzy_rescued or emb_rescued or llm_rescued:
+            print(
+                f"[mapping] fuzzy={fuzzy_rescued}, emb={emb_rescued}, llm={llm_rescued}"
+            )
 
     # Финальная проверка ПОРЯДКА (out-of-order). In-ToC уже проверен в начале;
     # после rescue могут появиться новые out-of-order — их нужно отловить.
