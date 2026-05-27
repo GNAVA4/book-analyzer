@@ -20,11 +20,17 @@ from .pdf_utils import (
 from .llm_engine import llm_client, LLM_BOUNDARY_CONTEXT
 from .ocr_engine import ocr_client
 from .toc_builder import build_toc
+from .toc_validator import validate_toc_via_ocr
 from .mapping_pipeline import map_sequence
 
 
 # Чанки с confidence НИЖЕ этого порога идут в LLM для очистки.
-CONFIDENCE_THRESHOLD = 0.80
+# 0.85 — компромисс: exact (1.0), tokenized_regex (0.85), page_hint_exact (0.90)
+# идут через алгоритм (они надёжные); rescue-стратегии (0.40-0.80) и
+# partial / num_prefix идут через LLM, где это реально нужно.
+# Поднимать до 0.90+ не имеет смысла: LLM-clean часто возвращает оригинал
+# из-за context errors / CJK retry — зря тратит время без улучшения качества.
+CONFIDENCE_THRESHOLD = 0.85
 
 
 _GARBAGE_NOTICE = (
@@ -40,17 +46,21 @@ async def parse_pdf_neural(
     deep_scan: bool = False,
     use_ocr: bool = True,
     llm_expand: bool = True,
+    validate_toc_ocr: bool = False,
 ) -> tuple:
     """
     Гибридный режим: многоуровневый pipeline с отказоустойчивыми fallback'ами.
 
     Параметры:
-      deep_scan   — включает LLM-сканирование по chunks при отсутствии ToC (МЕДЛЕННО)
-      use_ocr     — разрешать OCR через glm-ocr для нечитаемых документов
-      llm_expand  — расширять верхнеуровневый ToC поиском глав внутри частей
+      deep_scan         — LLM-сканирование по chunks при отсутствии ToC (МЕДЛЕННО)
+      use_ocr           — разрешать OCR через glm-ocr для нечитаемых документов
+      llm_expand        — расширять верхнеуровневый ToC поиском глав внутри частей
+      validate_toc_ocr  — после извлечения ToC прогнать OCR ±5 стр. вокруг
+                          оглавления для верификации (стоит ~1 минуту, читаемые
+                          PDF; для OCR-derived ToC пропускается)
 
     Возвращает (final_nodes, sequence, meta).
-    meta содержит: toc_source, deep_scan_used, ocr_used.
+    meta содержит: toc_source, deep_scan_used, ocr_used, toc_validation (опц).
     """
     doc = fitz.open(file_path)
 
@@ -106,6 +116,19 @@ async def parse_pdf_neural(
 
     print(f"[neural] ToC source: {toc_source}, sections: {len(sequence)}")
 
+    # --- Этап 1b: опциональная OCR-валидация ToC ---
+    # Пропускаем когда ToC уже пришёл из OCR (тогда валидация = self-comparison).
+    toc_validation = None
+    if validate_toc_ocr and sequence and not toc_source.startswith('ocr'):
+        try:
+            toc_validation = await validate_toc_via_ocr(
+                doc, sequence, progress_cb=progress_callback
+            )
+            print(f"[neural] ToC validation: {toc_validation}")
+        except Exception as e:
+            print(f"[neural] ToC validation failed: {e}")
+            toc_validation = {"error": str(e)}
+
     # --- Этап 2: полный текст и очистка колонтитулов ---
     if progress_callback:
         await progress_callback(15, "Подготовка полного текста...")
@@ -113,6 +136,32 @@ async def parse_pdf_neural(
     full_text = ocr_text if ocr_text else get_all_text(doc)
     full_text = clean_footer_header(full_text)
     total_pages = len(doc)
+
+    # --- Safety net: если ToC pipeline ничего не нашёл, но текст есть ---
+    # Без секций XML был бы пуст. Возвращаем единственную секцию со всем
+    # текстом — пусть пользователь видит хоть какое-то содержимое и понимает
+    # что pipeline провалился именно на этапе извлечения структуры.
+    if not sequence and full_text and len(full_text.strip()) >= 100:
+        if progress_callback:
+            await progress_callback(95, "Структура не извлечена — возвращаем полный текст одной секцией")
+        doc.close()
+        return (
+            [{
+                "title": "Полный текст книги",
+                "content": full_text,
+                "level": 1,
+                "page": 0,
+                "confidence": 0.0,
+                "match_strategy": "fallback_full_text",
+            }],
+            [{"title": "Полный текст книги", "level": 1, "page": None}],
+            {
+                "toc_source": toc_source,
+                "deep_scan_used": deep_scan and "deep_scan" in toc_source,
+                "ocr_used": ocr_text is not None,
+                "fallback": "no_toc_extracted",
+            },
+        )
 
     # --- Этап 3: многоуровневый маппинг ---
     if progress_callback:
@@ -203,4 +252,6 @@ async def parse_pdf_neural(
         "deep_scan_used": deep_scan and "deep_scan" in toc_source,
         "ocr_used": ocr_text is not None,
     }
+    if toc_validation is not None:
+        meta["toc_validation"] = toc_validation
     return final_nodes, sequence, meta

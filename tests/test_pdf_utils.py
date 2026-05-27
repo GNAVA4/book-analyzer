@@ -374,3 +374,45 @@ class TestTocBoundary:
     def test_fallback_for_empty_sequence(self):
         text = "Текст без оглавления"
         assert find_toc_boundary(text, []) == 0
+
+
+# ============================================================================
+# _search_with_confidence — exact_normalized promotion (Массель кейс)
+# ============================================================================
+
+class TestSearchConfidencePromotion:
+    def test_whitespace_only_diff_promotes_to_exact(self):
+        """Совпадение через tokenized_regex, отличающееся от title только
+        пробелами/переносами, должно вернуть conf=1.0 + exact_normalized."""
+        text = "preface 2.2.  Обучаемость\n  пользователя content"
+        title = "2.2. Обучаемость пользователя"
+        clean = "Обучаемость пользователя"
+        res = _search_with_confidence(text, title, clean, 0, 0)
+        assert res is not None
+        assert res['confidence'] == 1.00
+        assert res['strategy'] == 'exact_normalized'
+
+    def test_real_diff_stays_tokenized(self):
+        """Если между токенами в тексте есть лишние знаки пунктуации —
+        это не чистый whitespace, confidence остаётся 0.85."""
+        # title: «2.2 Обучаемость пользователя»
+        # в тексте: «2.2: Обучаемость, пользователя» — двоеточие и запятая
+        # допускаются в `[\s\W]*?` между токенами, но после нормализации
+        # пробелов всё равно отличаются от title.
+        text = "preface 2.2: Обучаемость, пользователя suffix"
+        title = "2.2 Обучаемость пользователя"
+        clean = "Обучаемость пользователя"
+        res = _search_with_confidence(text, title, clean, 0, 0)
+        assert res is not None
+        assert res['strategy'] == 'tokenized_regex'
+        assert res['confidence'] == 0.85
+
+    def test_exact_match_still_exact(self):
+        """Чистый exact-матч остаётся стратегией exact, без понижения."""
+        text = "preface 2.2. Обучаемость пользователя content"
+        title = "2.2. Обучаемость пользователя"
+        clean = "Обучаемость пользователя"
+        res = _search_with_confidence(text, title, clean, 0, 0)
+        assert res is not None
+        assert res['confidence'] == 1.00
+        assert res['strategy'] == 'exact'

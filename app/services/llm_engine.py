@@ -9,14 +9,17 @@ from openai import AsyncOpenAI
 # ---------------------------------------------------------------------------
 
 LLM_MODEL = "qwen2.5-7b-instruct"      # non-reasoning, отвечает в content
-LLM_CHUNK_SIZE = 1_500             # максимальный размер одного чанка (символов).
-                                   # Снижен с 2500 до 1500: при больших промптах с
-                                   # языковыми guard-инструкциями выходило за 4096
-                                   # context window LM Studio. С 1500 chunk + 500 tokens
-                                   # промпта + 1024 ответ влезает с запасом.
-LLM_BOUNDARY_CONTEXT = 600        # сколько символов даём LLM для уточнения границы
-LLM_MAX_PARALLEL = 3              # максимум параллельных вызовов к LM Studio/Ollama
-LLM_MAX_TOKENS = 1_024            # ответ обычно меньше; запас на reasoning-модели
+
+# Параметры под 8K-context LM Studio. Эмпирически: на русском тексте
+# 1 char может быть до 1.0 tokens (UTF-8 multi-byte), поэтому реальный
+# бюджет на чанк: 8192 - 1500 (max_tokens) - 500 (промпт) - запас = ~5500 tokens
+# = ~3500 chars русского текста в худшем случае.
+# ВАЖНО: модель в LM Studio должна быть загружена с ctx >= 8192.
+# Если получаете "Context size exceeded" — увеличьте ctx в LM Studio.
+LLM_CHUNK_SIZE = 3_000             # максимальный размер одного чанка (символов)
+LLM_BOUNDARY_CONTEXT = 1_000       # сколько символов даём LLM для уточнения границы
+LLM_MAX_PARALLEL = 3               # максимум параллельных вызовов к LM Studio/Ollama
+LLM_MAX_TOKENS = 1_500             # ответ; запас на reasoning-модели
 
 # Доля чужеземных символов (CJK, арабский, иврит, корейский) — выше этого
 # текст считаем галлюцинацией LLM («переводит» русский в китайский).
@@ -191,7 +194,7 @@ class LLMEngine:
     # Deep scan: LLM предлагает структуру по полному тексту
     # -----------------------------------------------------------------------
 
-    async def propose_structure_from_text(self, full_text: str, chunk_size: int = 5_000) -> list:
+    async def propose_structure_from_text(self, full_text: str, chunk_size: int = 10_000) -> list:
         """
         Дорогой fallback: книга без ToC. Разбиваем текст на крупные chunks
         и просим LLM предложить точки разделения на главы — заголовок
@@ -213,23 +216,27 @@ class LLMEngine:
         text = full_text[:150_000]
         chunks = [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
 
-        prompt_template = (
+        prompt_prefix = (
             "Твоя роль: технический редактор. Перед тобой фрагмент книги без оглавления.\n"
             "Задача: найди в нём ЯВНЫЕ заголовки разделов (главы, части, разделы).\n\n"
             "Правила:\n"
-            "1. Верни ТОЛЬКО JSON-объект с ключом \"items\".\n"
-            "2. Элемент: {\"title\": \"<заголовок как в тексте>\", \"level\": <1|2|3>}.\n"
+            '1. Верни ТОЛЬКО JSON-объект с ключом "items".\n'
+            '2. Элемент: {"title": "<заголовок как в тексте>", "level": <1|2|3>}.\n'
             "3. Не выдумывай заголовки которых нет в тексте.\n"
-            "4. Если заголовков нет — верни {\"items\": []}.\n\n"
-            "Фрагмент:\n---\n{chunk}\n---"
+            '4. Если заголовков нет — верни {"items": []}.\n\n'
+            "Фрагмент:\n---\n"
         )
+        prompt_suffix = "\n---"
 
         for idx, chunk in enumerate(chunks):
             try:
+                # Конкатенация вместо str.format — иначе фигурные скобки в JSON-примерах
+                # интерпретируются как placeholders и падает с KeyError: 'title'
+                prompt = prompt_prefix + chunk + prompt_suffix
                 async with self._semaphore:
                     response = await self.client.chat.completions.create(
                         model=self.model,
-                        messages=[{"role": "user", "content": prompt_template.format(chunk=chunk)}],
+                        messages=[{"role": "user", "content": prompt}],
                         temperature=0.1,
                         max_tokens=LLM_MAX_TOKENS,
                     )

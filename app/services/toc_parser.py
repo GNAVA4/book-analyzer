@@ -178,6 +178,17 @@ class HeuristicParser:
                     if pending_level == 1: current_chapter = prev
                     seen_titles.add(self._normalize(pending_title))
 
+                # «Благодарности Я написал ...» — короткое имя секции + длинное описание
+                # одной строкой. Отрезаем хвост-описание, оставляем только имя.
+                trimmed = self._trim_description_after_section_name(line_raw)
+                if trimmed != line_raw:
+                    self._add_node(root, current_chapter, trimmed, 1, None)
+                    seen_titles.add(self._normalize(trimmed))
+                    pending_title = ""
+                    pending_level = 0
+                    misses = 0
+                    continue
+
                 # Разделение слипшихся 3.1Пакет
                 parts = re.split(r'(?<=[а-яА-Яa-zA-Z])\s+(?=\d+\.\d+)', line_raw)
                 if len(parts) > 1:
@@ -201,6 +212,13 @@ class HeuristicParser:
                     if not current_chapter: final_level = 1
                     self._add_node(root, current_chapter, pending_title, final_level, line_raw)
                     if final_level == 1 and root.children: current_chapter = root.children[-1]
+                    seen_titles.add(self._normalize(pending_title))
+                    pending_title = ""
+                elif self._is_complete_section_name(pending_title) and len(line_raw) > 40:
+                    # pending — известное короткое имя секции (Благодарности, Примечания, …)
+                    # и следующая строка длинная (описание/абзац). Коммитим без склейки —
+                    # описание попадёт в content при mapping'е, а не в title.
+                    self._add_node(root, current_chapter, pending_title, pending_level, None)
                     seen_titles.add(self._normalize(pending_title))
                     pending_title = ""
                 elif len(pending_title + line_raw) < 300:
@@ -276,6 +294,59 @@ class HeuristicParser:
             if len(s) > 10 and norm_line.startswith(s):
                 return True
         return False
+
+    # Известные «короткие» имена секций без подзаголовков — если pending
+    # содержит ровно их (с возможным префиксом «Глава N.»), коммитим без склейки
+    # с описательным абзацем, идущим следом в ToC.
+    _COMPLETE_SECTION_NAMES = frozenset([
+        'благодарности', 'примечания', 'приложения', 'приложение',
+        'литература', 'библиография', 'предисловие', 'введение',
+        'заключение', 'оглавление', 'содержание', 'указатель',
+        'об авторе', 'об авторах', 'словарь', 'глоссарий',
+        'acknowledgments', 'notes', 'appendix', 'bibliography',
+        'preface', 'introduction', 'conclusion', 'index',
+        'about the author', 'glossary',
+    ])
+
+    def _is_complete_section_name(self, title: str) -> bool:
+        """True если title — это короткое самодостаточное имя раздела
+        (Благодарности, Примечания, …), и склеивать его с описанием неверно."""
+        if not title or len(title) > 50:
+            return False
+        norm = self._normalize(title)
+        # Прямое совпадение
+        if norm in {self._normalize(n) for n in self._COMPLETE_SECTION_NAMES}:
+            return True
+        # «глава N» + одно слово из списка — тоже самодостаточное
+        t = title.lower().strip()
+        for name in self._COMPLETE_SECTION_NAMES:
+            if t == name or t.endswith(' ' + name):
+                return True
+        return False
+
+    def _trim_description_after_section_name(self, line: str) -> str:
+        """
+        Если строка начинается с короткого известного имени раздела и продолжается
+        длинным описательным текстом (>= 30 символов), отрезаем описание.
+
+        Пример: «Благодарности Я написал «Не просто делайте...» → «Благодарности».
+        Возвращает оригинальную строку если паттерн не сработал.
+        """
+        if not line or len(line) < 40:
+            return line
+        # Перечислены в порядке предпочтения — длинные имена идут первыми
+        # (чтобы «об авторах» матчился раньше чем «об авторе»).
+        for name in sorted(self._COMPLETE_SECTION_NAMES, key=len, reverse=True):
+            # Имя в начале строки + пробел + остаток >= 30 символов
+            pat = re.compile(
+                r'^\s*(' + re.escape(name) + r')\s+(\S.{29,})$',
+                re.IGNORECASE
+            )
+            m = pat.match(line)
+            if m:
+                # Возвращаем «канонический» вид имени из исходной строки
+                return m.group(1).strip()
+        return line
 
 
 # ЭТА ФУНКЦИЯ ДОЛЖНА БЫТЬ ЗДЕСЬ (ДЛЯ ИСПРАВЛЕНИЯ IMPORT ERROR)

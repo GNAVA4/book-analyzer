@@ -15,9 +15,22 @@ import math
 from openai import AsyncOpenAI
 
 
-EMBEDDING_MODEL = "text-embedding-nomic-embed-text-v1.5"
+# Embedding-модель: при смене переменной нужно убедиться, что модель
+# с таким id загружена в LM Studio (см. вкладку Local Server → Models).
+#
+# Рекомендуемые модели для русского текста (в порядке предпочтения):
+#   * "bge-m3"                              — лучшее качество, 568M, без префиксов
+#   * "multilingual-e5-large"               — классика, требует EMBED_USE_E5_PREFIX
+#   * "multilingual-e5-base"                — компромисс, требует EMBED_USE_E5_PREFIX
+#   * "text-embedding-nomic-embed-text-v1.5" — лёгкая, но плохо для RU
+EMBEDDING_MODEL = "text-embedding-qwen3-embedding-0.6b"
 EMBEDDING_BASE_URL = "http://127.0.0.1:1234/v1"
 EMBEDDING_MAX_PARALLEL = 4
+
+# Модели семейства multilingual-e5 ОБУЧЕНЫ с префиксами "query: " и "passage: ".
+# Без них качество значительно хуже. Для bge-m3 и nomic префиксы не нужны.
+# Если ставите e5-модель — поменяйте флаг на True.
+EMBED_USE_E5_PREFIX = False
 
 # Размер скользящего фрагмента и шага для поиска.
 # 200/100 — достаточно чтобы заголовок целиком влез в одну позицию,
@@ -27,7 +40,12 @@ EMBED_STRIDE = 100
 
 # Минимальная cosine-similarity для принятия совпадения.
 # Подбирается эмпирически: ниже → больше ложных, выше → больше пропусков.
-EMBED_MATCH_THRESHOLD = 0.65
+# Зависит от модели — у каждой свой scale:
+#   * nomic-embed-text-v1.5       → 0.65 (даёт высокие абсолютные значения)
+#   * bge-m3                      → 0.55–0.65
+#   * multilingual-e5-large/base  → 0.75 (после нормализации)
+#   * Qwen3-Embedding-0.6b        → 0.45 (более «осторожные» оценки)
+EMBED_MATCH_THRESHOLD = 0.45
 
 
 def _cosine_similarity(a: list, b: list) -> float:
@@ -62,29 +80,43 @@ class EmbeddingEngine:
             self._available = False
         return self._available
 
-    async def embed(self, text: str) -> list:
-        """Возвращает embedding одного текста."""
+    async def embed(self, text: str, is_query: bool = False) -> list:
+        """
+        Возвращает embedding одного текста.
+
+        is_query: для моделей семейства multilingual-e5 нужно префиксовать
+        запросы (заголовки) "query: " и тексты (chunks) "passage: ".
+        Без префиксов качество существенно хуже.
+        """
         if not text or not text.strip():
             return []
-        cached = self._cache.get(text)
+        # Префикс — часть кэш-ключа, чтобы запрос и тот же текст как passage
+        # не путались.
+        cache_key = (text, is_query) if EMBED_USE_E5_PREFIX else text
+        cached = self._cache.get(cache_key)
         if cached is not None:
             return cached
+
+        input_text = text
+        if EMBED_USE_E5_PREFIX:
+            input_text = ("query: " if is_query else "passage: ") + text
+
         async with self._semaphore:
             resp = await self.client.embeddings.create(
                 model=self.model,
-                input=text,
+                input=input_text,
             )
         emb = resp.data[0].embedding
         # Кеш ограничиваем по размеру (не более 1024 ключей)
         if len(self._cache) < 1024:
-            self._cache[text] = emb
+            self._cache[cache_key] = emb
         return emb
 
-    async def embed_batch(self, texts: list) -> list:
+    async def embed_batch(self, texts: list, is_query: bool = False) -> list:
         """Параллельная пакетная обработка списка текстов."""
         if not texts:
             return []
-        tasks = [self.embed(t) for t in texts]
+        tasks = [self.embed(t, is_query=is_query) for t in texts]
         return await asyncio.gather(*tasks)
 
     async def locate_section(
@@ -114,8 +146,9 @@ class EmbeddingEngine:
             return -1, 0.0
 
         try:
-            title_emb = await self.embed(title)
-            chunk_embs = await self.embed_batch(chunks)
+            # Title — это «запрос», chunks — «passages» (для e5-моделей это важно)
+            title_emb = await self.embed(title, is_query=True)
+            chunk_embs = await self.embed_batch(chunks, is_query=False)
         except Exception as e:
             print(f"Embedding locate error for «{title[:40]}»: {e}")
             return -1, 0.0

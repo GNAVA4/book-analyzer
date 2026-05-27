@@ -64,7 +64,7 @@ class TestLocateSection:
         text_window = noise + target_chunk + noise
 
         # Мок embed: возвращает «1» если text содержит target_title, иначе «0»
-        async def fake_embed(text):
+        async def fake_embed(text, is_query=False):
             return [1.0, 1.0, 1.0] if target_title in text else [0.1, 0.0, 0.0]
 
         with patch.object(engine, "embed", side_effect=fake_embed):

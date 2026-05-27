@@ -22,6 +22,9 @@ ws_temp_*
 # Тестовые PDF (большие, локальные)
 test/
 
+# Сгенерированные XML результаты прогонов
+xml/
+
 # Локальные настройки Claude Code
 .claude/settings.json
 .claude/settings.local.json

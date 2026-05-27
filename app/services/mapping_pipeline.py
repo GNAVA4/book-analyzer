@@ -56,11 +56,19 @@ def _looks_like_toc_content(text: str, sample_lines: int = 10) -> bool:
 
 # Размер окна для page-hint поиска (в символах от ожидаемой позиции)
 PAGE_HINT_WINDOW = 5_000
-# Размер окна для embedding/LLM rescue
-RESCUE_WINDOW = 8_000
+# Размер окна для embedding/LLM rescue. На 8K-context LLM влезает ~10K chars
+# текста в одно сообщение — поэтому 10K разумный максимум.
+RESCUE_WINDOW = 10_000
 # Минимальная относительная позиция out-of-order чтобы считать секцию
 # подозрительной (например, секция 50 нашлась раньше секции 30).
 VERIFY_OUT_OF_ORDER_TOLERANCE = 3
+# Если exact-match оказался далеко от ожидаемой по page-hint позиции
+# (>= этого числа символов), считаем находку подозрительной и отправляем
+# в rescue. Закрывает кейс «Глава 9 нашлась в Примечаниях».
+# Пропорционально размеру книги: для книги в 500K chars — 150K (~60 страниц).
+# С запасом, потому что page-hint от LLM ToC не всегда точен (LLM может ошибиться
+# на 5-10 страниц), и страницы в ToC могут не совпадать с физической нумерацией PDF.
+PAGE_DISTANCE_TOLERANCE_RATIO = 0.30
 
 
 def _estimate_position_from_page(page: int, total_pages: int, full_text_len: int) -> int:
@@ -272,7 +280,7 @@ async def map_sequence(
     # --- РАННИЙ verify: убираем находки внутри страниц ToC ---
     # Запускаем ДО rescue, чтобы передать «найденные в ToC» секции на rescue,
     # как настоящие not_found. Иначе они останутся с ложным confidence=1.0.
-    mapped = _verify_and_correct_order(mapped, full_text, full_text_len)
+    mapped = _verify_and_correct_order(mapped, full_text, full_text_len, total_pages)
 
     not_found = [i for i, m in enumerate(mapped) if m['start_idx'] == -1]
     if not not_found:
@@ -390,14 +398,36 @@ async def map_sequence(
                 f"[mapping] fuzzy={fuzzy_rescued}, emb={emb_rescued}, llm={llm_rescued}"
             )
 
+    # --- Восстановление _backup для page-distance секций без rescue ---
+    # Если page-distance отбросил secию, а rescue не нашёл лучшего варианта —
+    # возвращаем оригинальный exact-match. Лучше «возможно ложная позиция»
+    # чем «никакой позиции».
+    restored = 0
+    for m in mapped:
+        if m.get('_backup') and m['start_idx'] == -1:
+            b = m['_backup']
+            m['start_idx'] = b['start_idx']
+            m['end_idx'] = b['end_idx']
+            m['confidence'] = b['confidence'] * 0.7  # снижаем уверенность
+            m['match_strategy'] = b['match_strategy'] + '_restored_after_rescue_fail'
+            restored += 1
+        m.pop('_backup', None)
+    if restored:
+        print(f"[mapping] restored {restored} page-distance reverts (rescue not helpful)")
+
     # Финальная проверка ПОРЯДКА (out-of-order). In-ToC уже проверен в начале;
     # после rescue могут появиться новые out-of-order — их нужно отловить.
-    mapped = _verify_and_correct_order(mapped, full_text, full_text_len)
+    mapped = _verify_and_correct_order(mapped, full_text, full_text_len, total_pages)
 
     return mapped
 
 
-def _verify_and_correct_order(mapped: list, full_text: str, full_text_len: int) -> list:
+def _verify_and_correct_order(
+    mapped: list,
+    full_text: str,
+    full_text_len: int,
+    total_pages: int = None,
+) -> list:
     """
     Проверяет результаты маппинга:
       1. Out-of-order: если секция N оказалась раньше секции M раньше неё в ToC,
@@ -405,12 +435,54 @@ def _verify_and_correct_order(mapped: list, full_text: str, full_text_len: int) 
       2. Found inside ToC: если контент после совпадения выглядит как сама
          таблица оглавления (точки-лидеры, page-нумерация), значит секция
          «найдена» внутри страниц ToC, а не в основном тексте.
+      3. Page-distance: если у секции есть page в ToC, а exact-матч оказался
+         далеко от ожидаемой позиции — это упоминание в Примечаниях/Глоссарии,
+         не основной текст. Отменяем находку.
 
     Помечаем такие как not_found, чтобы XML не получил мусорные секции.
     """
     running_max = -1
     out_of_order = 0
     toc_content = 0
+    page_distance = 0
+
+    # --- Проверка 0: page-distance — exact match далеко от ожидаемой страницы ---
+    # Закрывает кейс «Глава 9 нашлась в Примечаниях» — exact-match попал
+    # в упоминание главы в Глоссарии вместо реального текста.
+    #
+    # ВАЖНО: НЕ удаляем находку сразу, а ПОМЕЧАЕМ как suspect и сохраняем
+    # оригинальные данные в _backup. После rescue если найдено лучшее место —
+    # оно перезапишет. Если нет — восстанавливаем оригинал в финале.
+    # Это защита от случаев когда page-hint от LLM ToC неточен — мы рискуем
+    # отвергнуть верную находку и не найти замену.
+    if total_pages:
+        tolerance = max(int(full_text_len * PAGE_DISTANCE_TOLERANCE_RATIO), 30_000)
+        for m in mapped:
+            if m['start_idx'] == -1:
+                continue
+            page = m['item'].get('page')
+            if not page:
+                continue
+            # Только рискуем отвергать сильные стратегии (exact/tokenized).
+            # У rescue confidence низкий — там и так велик шанс ошибки,
+            # их не передаём в page-distance.
+            strat = m.get('match_strategy', '')
+            if strat not in ('exact', 'exact_normalized', 'tokenized_regex'):
+                continue
+            est = _estimate_position_from_page(page, total_pages, full_text_len)
+            if abs(m['start_idx'] - est) > tolerance:
+                # Сохраняем оригинал на случай если rescue не найдёт лучшего.
+                m['_backup'] = {
+                    'start_idx': m['start_idx'],
+                    'end_idx': m['end_idx'],
+                    'confidence': m['confidence'],
+                    'match_strategy': m['match_strategy'],
+                }
+                m['start_idx'] = -1
+                m['end_idx'] = -1
+                m['confidence'] = 0.0
+                m['match_strategy'] = 'reverted_page_distance'
+                page_distance += 1
 
     # --- Проверка 1: «контент это сам ToC» ---
     # Берём фиксированные 800 chars после end_idx (НЕ ограничивая next_start),
@@ -443,7 +515,10 @@ def _verify_and_correct_order(mapped: list, full_text: str, full_text_len: int) 
         if m['start_idx'] > running_max:
             running_max = m['start_idx']
 
-    if out_of_order or toc_content:
-        print(f"[mapping] verify: reverted {out_of_order} out-of-order, {toc_content} in-ToC")
+    if out_of_order or toc_content or page_distance:
+        print(
+            f"[mapping] verify: reverted {out_of_order} out-of-order, "
+            f"{toc_content} in-ToC, {page_distance} page-distance"
+        )
 
     return mapped

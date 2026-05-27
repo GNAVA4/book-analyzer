@@ -276,6 +276,15 @@ def _search_with_confidence(
         if not match:
             match = pattern.search(full_text, start_pos)
         if match:
+            # Промоут до conf=1.0 если match отличается от title только пробелами:
+            # одна нормализация пробельных символов с обеих сторон — и они равны.
+            # Это типичный кейс PDF-извлечения, где переносы строк/неразрывные
+            # пробелы рвут exact-match, но содержимое идентично title.
+            match_norm = re.sub(r'\s+', ' ', match.group()).strip().lower()
+            title_norm = re.sub(r'\s+', ' ', title).strip().lower()
+            if match_norm == title_norm:
+                return {'start': match.start(), 'end': match.end(),
+                        'confidence': CONF_EXACT, 'strategy': 'exact_normalized'}
             return {'start': match.start(), 'end': match.end(),
                     'confidence': CONF_TOKENIZED, 'strategy': 'tokenized_regex'}
 

@@ -166,6 +166,42 @@ class TestVerify:
         # exact остаётся (доверяем сильным стратегиям)
         assert result[2]["start_idx"] == 500
 
+    def test_page_distance_reverts_far_exact_match(self):
+        """exact match, попавший далеко от page-hint, должен быть отвергнут."""
+        full_text = "Long book content. " * 50_000  # ~950K chars
+        full_text_len = len(full_text)
+        # Глава на странице 10 из 200, ожидаемая позиция ~47K
+        # А exact-match попал на 500K — это явно упоминание в Примечаниях
+        mapped = self._make_mapped([
+            ("Глава 1", 30_000, "exact", 5),    # рядом с page 5 (ожид ~24K)
+            ("Глава 10", 500_000, "exact", 10),  # ДАЛЕКО от page 10 (ожид ~47K)
+        ])
+        result = _verify_and_correct_order(mapped, full_text, full_text_len, total_pages=200)
+        # Глава 1 остаётся, Глава 10 отвергнута
+        assert result[0]["start_idx"] == 30_000
+        assert result[1]["start_idx"] == -1
+        assert result[1]["match_strategy"] == "reverted_page_distance"
+
+    def test_page_distance_keeps_close_match(self):
+        """exact match рядом с page-hint остаётся."""
+        full_text = "Long book content. " * 50_000  # 950K chars
+        mapped = self._make_mapped([
+            ("Глава 5", 250_000, "exact", 50),  # page 50/200, ожид ~237K — допустимо
+        ])
+        result = _verify_and_correct_order(mapped, full_text, len(full_text), total_pages=200)
+        # Расстояние небольшое — остаётся
+        assert result[0]["start_idx"] == 250_000
+
+    def test_page_distance_without_pages_skipped(self):
+        """Если у секции нет page, проверка page_distance не применяется."""
+        full_text = "Long book content. " * 50_000
+        mapped = self._make_mapped([
+            ("Глава 1", 500_000, "exact", None),  # page=None
+        ])
+        result = _verify_and_correct_order(mapped, full_text, len(full_text), total_pages=200)
+        # Без page нет ориентира — не отвергаем
+        assert result[0]["start_idx"] == 500_000
+
 
 # ============================================================================
 # _page_hint_search

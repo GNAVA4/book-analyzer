@@ -14,6 +14,7 @@ Builder пробует уровни по очереди, останавлива�
     6. LLM expansion: добавить главы внутрь высокоуровневых частей
 """
 
+import re
 from typing import Callable, Awaitable
 
 from .toc_parser import HeuristicParser, toc_to_linear_sequence
@@ -21,23 +22,72 @@ from .llm_engine import llm_client
 from .ocr_engine import ocr_client
 
 
+# Паттерн «page-число + заглавная буква» — типичная склейка пунктов ToC
+# в OCR-выводе («Заголовок1 21 Заголовок2 41 Заголовок3 63» одной строкой).
+# Используется только когда таких переходов в строке несколько — это
+# гарантирует что мы не режем обычную прозу вроде «...через 100 метров Иван...».
+_STICKY_TOC_PAT = re.compile(r'\s(\d{1,4})\s(?=[А-ЯЁA-Z])')
+# Хвостовой номер страницы после последнего заголовка в строке —
+# одинокая «<NN>» в конце без следующей заглавной.
+_TAIL_PAGE_PAT = re.compile(r'\s+(\d{1,4})\s*$')
+
+
+def _split_sticky_toc_lines(text: str) -> str:
+    """
+    Разбивает строки, в которых OCR слепил несколько пунктов ToC.
+
+    Эвристика: строка длиннее 60 символов и содержит >= 2 переходов вида
+    «<NN> <Заглавная>». Тогда:
+      1. Перед каждой заглавной (идущей после числа) вставляем `\\n`.
+      2. Перед каждым page-числом ставим 3+ пробелов — это нужно чтобы
+         item_pattern эвристики (`\\s{3,}` как сепаратор) распознал номер
+         страницы. Без этого heuristic не парсил бы получившиеся подстроки
+         с одним пробелом перед числом.
+
+    Защита от ложных срабатываний на прозе: требуем И длину >60, И >= 2
+    переходов — обычное предложение редко содержит две таких комбинации.
+    """
+    if not text:
+        return text
+    out_lines = []
+    for line in text.split('\n'):
+        if len(line) > 60 and len(_STICKY_TOC_PAT.findall(line)) >= 2:
+            # Шаг 1: «<NN> <Cap>» → «   <NN>\n<Cap>»
+            line = _STICKY_TOC_PAT.sub(r'   \1\n', line)
+            # Шаг 2: для каждой получившейся под-строки, если она кончается
+            # «text <NN>» с одним пробелом — поднимаем до 3 пробелов.
+            sub_lines = []
+            for sub in line.split('\n'):
+                sub = _TAIL_PAGE_PAT.sub(r'   \1', sub)
+                sub_lines.append(sub)
+            line = '\n'.join(sub_lines)
+        out_lines.append(line)
+    return '\n'.join(out_lines)
+
+
 # --- Пороги качества ---------------------------------------------------------
 
 # Достаточное число секций чтобы считать ToC «качественным» (не использовать
-# более дорогие уровни).
-TOC_GOOD_ENOUGH = 8
+# более дорогие уровни). Поднято с 8 до 12 — для quality-first режима лучше
+# попросить LLM проверить даже когда эвристика что-то нашла.
+TOC_GOOD_ENOUGH = 12
 
 # Минимум секций, ниже которого ToC считается «недостаточным» и срабатывает
-# LLM-fallback (даже если эвристика что-то нашла).
-TOC_MIN_USEFUL = 3
+# LLM-fallback (даже если эвристика что-то нашла). Поднят с 3 до 5 —
+# одна-две найденных секции это явно мусор (только ББК/УДК), но даже 3-4
+# секции на крупной книге подозрительны.
+TOC_MIN_USEFUL = 5
 
 # Если ToC выглядит «верхнеуровневым» — все секции level 1 и их мало —
 # попробовать LLM-expansion для поиска глав внутри частей.
 TOC_HIGH_LEVEL_THRESHOLD = 6
 
-# Контекст-лимиты под 4096-token модели LM Studio. См. llm_engine.LLM_*.
-TOC_LLM_MAX_CHARS = 6_000
-TOC_LLM_PAGES = 15
+# Контекст-лимиты под 8K-context LM Studio (qwen2.5-7b).
+# 12000 chars ≈ 4800 tokens текста + 500 промпт + 2048 ответ = ~7300 tokens — влезает.
+# ВАЖНО: модель в LM Studio должна быть загружена с ctx >= 8192.
+# Если получаете "Context size exceeded" / "n_keep > n_ctx" — увеличьте ctx в LM Studio.
+TOC_LLM_MAX_CHARS = 12_000
+TOC_LLM_PAGES = 20
 OCR_TOC_PAGES = 30  # сколько первых страниц OCR-ить для поиска ToC
 
 
@@ -62,7 +112,9 @@ async def _ocr_then_heuristic(doc, progress_cb=None) -> tuple[list, str]:
     if progress_cb:
         await progress_cb(6, f"OCR первых {OCR_TOC_PAGES} стр. для поиска ToC...")
     ocr_text = await ocr_client.ocr_document(doc, progress_callback=progress_cb, max_pages=OCR_TOC_PAGES)
-    return _heuristic(ocr_text), ocr_text
+    # Перед heuristic разбиваем склеенные ToC-строки (типично для glm-ocr):
+    # OCR может вернуть всю ToC одной строкой без переносов между пунктами.
+    return _heuristic(_split_sticky_toc_lines(ocr_text)), ocr_text
 
 
 async def _ocr_then_llm(ocr_text: str) -> list:
@@ -147,8 +199,16 @@ async def _llm_expand_parts(sequence: list, full_text: str, progress_cb=None) ->
 
 def _dedup_and_order(sequence: list) -> list:
     """
-    Удаляет точные дубли (title+page) и сортирует по странице, если страницы
-    известны для большинства пунктов.
+    Удаляет дубли (title-only, нормализованный) и сортирует по странице,
+    если страницы известны для большинства пунктов.
+
+    Дедуп по title-only (а не (title, page)) — потому что один и тот же
+    раздел может прийти из разных источников: heuristic с page=5,
+    повторный заголовок в самой книге без page. Кейс Массель: «2. Принципы»
+    в ToC + «2. ПРИНЦИПЫ» как заголовок страницы — это один раздел.
+
+    Из дубликатов выбираем тот, у которого ЕСТЬ page (приоритетнее) и
+    больший level (более детальный).
 
     Решает проблему «парсер захватил два оглавления подряд» (краткое +
     детальное в одной книге) — после дедупа и сортировки получаем единый
@@ -157,17 +217,30 @@ def _dedup_and_order(sequence: list) -> list:
     if not sequence:
         return sequence
 
-    seen = set()
-    deduped = []
+    def _norm(t: str) -> str:
+        # Lowercase + collapse whitespace — ловит регистр и переносы
+        return re.sub(r'\s+', ' ', (t or '').lower()).strip()
+
+    by_norm: dict = {}
+    order: list = []
     for s in sequence:
-        title = (s.get('title') or '').lower().strip()
+        title = _norm(s.get('title'))
         if not title:
             continue
-        key = (title, s.get('page'))
-        if key in seen:
+        if title not in by_norm:
+            by_norm[title] = s
+            order.append(title)
             continue
-        seen.add(key)
-        deduped.append(s)
+        # Дубликат — выбираем лучший вариант: с page > без, больший level выигрывает
+        prev = by_norm[title]
+        prev_has_page = isinstance(prev.get('page'), int)
+        curr_has_page = isinstance(s.get('page'), int)
+        if curr_has_page and not prev_has_page:
+            by_norm[title] = s
+        elif curr_has_page == prev_has_page and s.get('level', 1) > prev.get('level', 1):
+            by_norm[title] = s
+
+    deduped = [by_norm[t] for t in order]
 
     has_pages = sum(1 for s in deduped if isinstance(s.get('page'), int))
     if has_pages / max(len(deduped), 1) > 0.7:
@@ -266,12 +339,13 @@ async def build_toc(
     # Если OCR уже сделан выше по pipeline (например, документ unreadable) —
     # сразу работаем с OCR-текстом.
     if ocr_text:
-        seq = _heuristic(ocr_text[:50_000])
+        # Разбиваем склеенные ToC-строки перед эвристикой
+        seq = _heuristic(_split_sticky_toc_lines(ocr_text[:50_000]))
         if len(seq) > TOC_MIN_USEFUL:
-            return seq, "ocr_heuristic", ocr_text
+            return _dedup_and_order(seq), "ocr_heuristic", ocr_text
         seq = await _llm_from_text(ocr_text)
         if seq:
-            return seq, "ocr_llm", ocr_text
+            return _dedup_and_order(seq), "ocr_llm", ocr_text
         # OCR есть, но никто ничего не нашёл — оставляем пустое
         return [], "none", ocr_text
 
@@ -281,11 +355,14 @@ async def build_toc(
     raw_text = ""
     for i in range(min(20, len(doc))):
         raw_text += doc[i].get_text() + "\n"
-    seq = _heuristic(raw_text)
+    # PyMuPDF может вернуть ToC одной строкой если в PDF многоколоночная
+    # вёрстка или пункты разделены табами. Разбиваем по page→capital
+    # перед эвристикой — Иглмен-кейс.
+    seq = _heuristic(_split_sticky_toc_lines(raw_text))
 
     if len(seq) >= TOC_GOOD_ENOUGH and not _is_high_level_only(seq):
         # Качественный многоуровневый ToC — можно использовать как есть
-        return seq, "heuristic", None
+        return _dedup_and_order(seq), "heuristic", None
 
     # --- Уровень 2: дополняем LLM-ом из первых страниц ---
     if progress_cb:
@@ -299,7 +376,7 @@ async def build_toc(
 
     if len(seq) >= TOC_GOOD_ENOUGH and not _is_high_level_only(seq):
         # LLM-expansion для верхнеуровневого ToC отрабатывается отдельно ниже
-        return seq, source, None
+        return _dedup_and_order(seq), source, None
 
     # --- Уровень 3+4: OCR (картиночный ToC даже в «читаемом» PDF) ---
     if enable_ocr and len(seq) < TOC_GOOD_ENOUGH:

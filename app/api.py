@@ -4,6 +4,7 @@ import tempfile
 from uuid import uuid4
 
 from fastapi import APIRouter, UploadFile, File, WebSocket, Response, HTTPException
+from starlette.websockets import WebSocketDisconnect, WebSocketState
 
 from app.services.docx_parser import parse_docx
 from app.services.pdf_parser_fast import parse_pdf_fast
@@ -103,6 +104,7 @@ async def websocket_analyze(websocket: WebSocket):
         deep_scan = bool(data.get("deep_scan", False))
         use_ocr = bool(data.get("use_ocr", True))
         llm_expand = bool(data.get("llm_expand", False))
+        validate_toc_ocr = bool(data.get("validate_toc_ocr", False))
 
         if not temp_id:
             await websocket.send_json({"type": "error", "message": "temp_id не передан"})
@@ -122,6 +124,7 @@ async def websocket_analyze(websocket: WebSocket):
             deep_scan=deep_scan,
             use_ocr=use_ocr,
             llm_expand=llm_expand,
+            validate_toc_ocr=validate_toc_ocr,
         )
 
         # Подсчитываем сколько секций спасены и сколько отвергнуты verification
@@ -156,6 +159,7 @@ async def websocket_analyze(websocket: WebSocket):
             "toc_source": meta.get("toc_source", "unknown"),
             "deep_scan_used": meta.get("deep_scan_used", False),
             "ocr_used": meta.get("ocr_used", False),
+            "toc_validation": meta.get("toc_validation"),
         }
 
         tree_data = build_tree_structure(flat_nodes)
@@ -167,11 +171,24 @@ async def websocket_analyze(websocket: WebSocket):
             "stats": stats,
         })
 
+    except WebSocketDisconnect:
+        # Клиент закрыл соединение (cancel button) — это нормально, не ошибка
+        pass
     except Exception as e:
-        await websocket.send_json({"type": "error", "message": str(e)})
+        # Пытаемся уведомить клиента об ошибке, но соединение уже могло закрыться
+        if websocket.application_state == WebSocketState.CONNECTED:
+            try:
+                await websocket.send_json({"type": "error", "message": str(e)})
+            except Exception:
+                pass
     finally:
         _safe_remove(temp_path)
-        await websocket.close()
+        # close() кидает RuntimeError если соединение уже закрыто (клиент отменил)
+        if websocket.application_state == WebSocketState.CONNECTED:
+            try:
+                await websocket.close()
+            except Exception:
+                pass
 
 
 @router.post("/analyze/fast")
