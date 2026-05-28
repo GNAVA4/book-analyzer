@@ -415,12 +415,17 @@ async def map_sequence(
     if restored:
         print(f"[mapping] restored {restored} page-distance reverts (rescue not helpful)")
 
+    # Финальная проверка ПОРЯДКА (out-of-order). In-ToC уже проверен в начале;
+    # после rescue могут появиться новые out-of-order — их нужно отловить.
+    mapped = _verify_and_correct_order(mapped, full_text, full_text_len, total_pages)
+
     # --- Финальный fallback: page_cut для секций у которых всё rescue провалилось ---
+    # Запускается ПОСЛЕ финального verify — иначе секции, найденные rescue но откащенные
+    # как out-of-order финальным verify, остаются с conf=0.00 (page_cut их не видел,
+    # они были start_idx != -1 в момент первого запуска).
     # Когда заголовок секции физически отсутствует в тексте (крупная типографика,
     # скан, декоративный шрифт — PyMuPDF не извлекает), нарезаем контент по
     # позиции страницы из ToC вместо по совпадению с заголовком.
-    # Это лучше чем conf=0.00 / пустой контент — контент будет, хотя и без
-    # точного выравнивания по заголовку.
     if total_pages:
         page_cut = 0
         for m in mapped:
@@ -439,10 +444,6 @@ async def map_sequence(
             page_cut += 1
         if page_cut:
             print(f"[mapping] page_cut fallback: {page_cut} sections")
-
-    # Финальная проверка ПОРЯДКА (out-of-order). In-ToC уже проверен в начале;
-    # после rescue могут появиться новые out-of-order — их нужно отловить.
-    mapped = _verify_and_correct_order(mapped, full_text, full_text_len, total_pages)
 
     return mapped
 
