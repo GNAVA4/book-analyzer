@@ -16,14 +16,12 @@ Frontend: single-page `static/index.html` (vanilla JS + dark theme)
 - **Иглмен**: 22 sections (6 not found — large typography headers PyMuPDF can't extract)
 - **Клейнман, Розенсон**: working normally
 - **parallelnoe**: 248 sections, ~160 with content, ~50 reverted in appendices
-- **Release It!**: ⚠️ REGRESSION — 34 sections but 7 conf=0.00 (pages 13–24, front matter)
+- **Release It!**: 34 sections, 31 with content, avg_conf=0.716 — fixed via page_cut fallback
 - All pipeline flags ON by default: `deep_scan`, `use_ocr`, `llm_expand`, `validate_toc_ocr`
 
 ## Active work
-Release It! regression: 7 sections (pages 13–24) have confidence=0.00 and empty content.
-Titles: "Для кого предназначена…", "Структура книги", "Благодарности", "1.1.", "1.2.", "1.5.", "Часть I."
-Likely cause: page-distance check reverts exact-match found in ToC zone, rescue then fails for pages 13–24.
-Investigation started but not finished — interrupted by user request to document session.
+All P0 issues from session 001 resolved. No active work item.
+Next: re-run Иглмен to confirm page_cut also fixes its 6 not-found large-typography headings.
 
 ## Decisions that affect ALL code
 - **CONFIDENCE_THRESHOLD=0.85**: above → `fast_clean_chunk` (algo), below → LLM boundary+clean
@@ -32,6 +30,9 @@ Investigation started but not finished — interrupted by user request to docume
 - **All flags ON by default**: `deep_scan=True, use_ocr=True, llm_expand=True, validate_toc_ocr=True` — all features always run
 - **PAGE_DISTANCE_TOLERANCE_RATIO=0.30**: match > 30% of text from expected page position → suspect
 - **LLM clean IS parallel**: `process_large_text` uses `asyncio.gather` — do not claim it's sequential
+
+- **page_cut confidence=0.30**: sections found via page_cut have approximate positions; content starts at estimated page boundary. Used by fast_clean_chunk (no LLM boundary fix).
+- **page_cut excluded from running_max**: page_cut sections are invisible to out-of-order checking — approximate positions must not anchor ordering logic for adjacent sections.
 
 ## Known landmines ⚠️
 - **GPU max 90%**: at 100% user's display disappears — never load all models simultaneously
