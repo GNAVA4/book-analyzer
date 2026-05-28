@@ -1,6 +1,8 @@
 """Тесты для toc_builder — постпроцессинг OCR-вывода перед heuristic-парсером."""
 
-from app.services.toc_builder import _split_sticky_toc_lines
+from app.services.toc_builder import (
+    _split_sticky_toc_lines, _count_toc_entry_lines, _looks_incomplete,
+)
 
 
 class TestSplitStickyTocLines:
@@ -58,3 +60,38 @@ class TestSplitStickyTocLines:
         result = _split_sticky_toc_lines(sticky)
         lines = [l for l in result.split('\n') if l.strip()]
         assert len(lines) >= 4
+
+
+class TestLooksIncomplete:
+    def test_counts_inline_page_entries(self):
+        raw = (
+            "Содержание\n"
+            "Введение .................... 5\n"
+            "Глава 1. Основы ............. 10\n"
+            "Глава 2. Развитие ........... 30\n"
+        )
+        assert _count_toc_entry_lines(raw) == 3
+
+    def test_counts_separate_line_entries(self):
+        # формат Розенсона: заголовок на одной строке, страница на следующей
+        raw = (
+            "Глава 1. Вещь в культуре\n26\n"
+            "Вещь и Дизайн\n26\n"
+            "Вещь и Культура\n27\n"
+        )
+        assert _count_toc_entry_lines(raw) == 3
+
+    def test_incomplete_when_raw_has_more_than_heuristic(self):
+        # эвристика нашла 2 пункта, а в сыром тексте их 8 → неполнота
+        raw = "\n".join(f"Подраздел {i} ............ {i*3}" for i in range(8))
+        seq = [{"title": "Глава 1", "page": 1, "level": 1},
+               {"title": "Глава 2", "page": 5, "level": 1}]
+        assert _looks_incomplete(seq, raw) is True
+
+    def test_complete_when_counts_match(self):
+        raw = "\n".join(f"Глава {i} ............ {i*10}" for i in range(1, 6))
+        seq = [{"title": f"Глава {i}", "page": i * 10, "level": 1} for i in range(1, 6)]
+        assert _looks_incomplete(seq, raw) is False
+
+    def test_empty_seq_is_incomplete(self):
+        assert _looks_incomplete([], "Глава 1 .... 5") is True

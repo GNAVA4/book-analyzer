@@ -11,7 +11,35 @@ from app.services.llm_engine import (
     _strip_llm_preamble,
     _strip_markdown_fences,
     _extract_message_content,
+    _parse_toc_items,
 )
+
+
+class TestParseTocItems:
+    def test_clean_json(self):
+        raw = '{"items": [{"title": "Введение", "page": 5, "level": 1}]}'
+        assert len(_parse_toc_items(raw)) == 1
+
+    def test_markdown_fenced(self):
+        raw = '```json\n{"items": [{"title": "A", "page": 1, "level": 1}]}\n```'
+        assert len(_parse_toc_items(raw)) == 1
+
+    def test_truncated_array_salvages_complete_objects(self):
+        # обрыв по max_tokens: последний объект неполный — остальные уцелевают
+        raw = ('{"items": [{"title": "Введение", "page": 5, "level": 1}, '
+               '{"title": "Глава 1", "page": 10, "level": 1}, {"title": "Гла')
+        assert len(_parse_toc_items(raw)) == 2
+
+    def test_single_bad_object_skipped(self):
+        raw = ('{"items": [{"title": "A", "page": 1, "level": 1}, '
+               '{"title": "B" "page": 2}, {"title": "C", "page": 3, "level": 1}]}')
+        titles = [d["title"] for d in _parse_toc_items(raw)]
+        assert titles == ["A", "C"]
+
+    def test_empty_and_garbage(self):
+        assert _parse_toc_items("") == []
+        assert _parse_toc_items("no json here") == []
+        assert _parse_toc_items('{"items": []}') == []
 
 
 class TestScrubForeignScript:

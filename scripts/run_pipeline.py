@@ -22,7 +22,7 @@ sys.stdout.reconfigure(encoding='utf-8', errors='replace', line_buffering=True)
 
 API_BASE = "http://127.0.0.1:8000"
 WS_URL = "ws://127.0.0.1:8000/ws/analyze"
-OUT_DIR = Path("xml")
+OUT_DIR = Path(os.environ.get("OUT_DIR", "xml"))
 # Включается через env: VALIDATE_TOC_OCR=1 python scripts/run_pipeline.py ...
 VALIDATE_TOC_OCR = bool(int(os.environ.get("VALIDATE_TOC_OCR", "0")))
 
@@ -78,13 +78,49 @@ async def process_one(pdf_path: Path) -> dict:
     if not result:
         return {"error": "no result", "file": pdf_path.name}
 
-    # Save XML
     OUT_DIR.mkdir(exist_ok=True)
-    out_path = OUT_DIR / (pdf_path.stem + ".xml")
+    stem = pdf_path.stem
+
+    # Save XML
+    out_path = OUT_DIR / (stem + ".xml")
     out_path.write_text(result["xml"], encoding="utf-8")
-    print(f"  saved → {out_path}")
+
     stats = result.get("stats", {})
+    print(f"  saved → {out_path}")
     print(f"  stats: {json.dumps(stats, ensure_ascii=False)}")
+
+    # Save companion report: stats + per-section breakdown parsed from XML
+    import xml.etree.ElementTree as ET
+    report = {
+        "file": pdf_path.name,
+        "pipeline_flags": {
+            "deep_scan": True,
+            "use_ocr": True,
+            "llm_expand": True,
+            "validate_toc_ocr": True,
+        },
+        "stats": stats,
+        "sections": [],
+    }
+    try:
+        root = ET.fromstring(result["xml"])
+        for sec in root.findall(".//section"):
+            content = sec.text or ""
+            report["sections"].append({
+                "title": sec.get("title", ""),
+                "page": sec.get("page", ""),
+                "confidence": float(sec.get("confidence", 0)),
+                "match_strategy": sec.get("match_strategy", ""),
+                "content_len": len(content.strip()),
+                "content_preview": content.strip()[:200],
+            })
+    except Exception as e:
+        report["xml_parse_error"] = str(e)
+
+    report_path = OUT_DIR / (stem + "_report.json")
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"  report → {report_path}")
+
     return {"file": pdf_path.name, "stats": stats, "xml_path": str(out_path)}
 
 

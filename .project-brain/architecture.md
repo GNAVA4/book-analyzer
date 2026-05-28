@@ -1,5 +1,5 @@
 # Architecture — Book Analyzer
-_Last updated: 2026-05-28 (session 001)_
+_Last updated: 2026-05-29 (session 004)_
 
 ## What this system does
 Parses PDF/DOCX/TXT books into structured XML: extracts Table of Contents and slices each section's
@@ -19,10 +19,12 @@ for both ToC extraction and section mapping — handles damaged, scanned, and co
     ▼                                                            ▼
 [pdf_parser_neural.py]  ←── coordinator, thin                   │
     │                                                            │
-    ├─► [toc_builder.py]  — ToC cascade (6 levels)              │
-    │       ├─► toc_parser.py  (heuristic)                      │
-    │       ├─► llm_engine.py  (extract_toc_json)               │
-    │       ├─► ocr_engine.py  (glm-ocr)                        │
+    ├─► [toc_builder.py]  — ToC cascade + smart fallback        │
+    │       ├─► toc_parser.py   (heuristic)                     │
+    │       ├─► llm_engine.py   (extract_toc_json + salvage)    │
+    │       ├─► ocr_engine.py   (glm-ocr)                       │
+    │       ├─► toc_validate.py (score/validate candidates)     │
+    │       │      └─► embedding_engine.py (grounding)          │
     │       └─► toc_validator.py (OCR verify, optional)         │
     │                                                            │
     ├─► [mapping_pipeline.py]  — section mapping (5 levels)     │
@@ -72,11 +74,18 @@ for both ToC extraction and section mapping — handles damaged, scanned, and co
 
 **Cascade levels:**
 1. HeuristicParser on PyMuPDF raw_text (fast, first 20 pages)
-2. LLM `extract_toc_json` on first 15 pages text (if level 1 insufficient)
-3. OCR first 30 pages + HeuristicParser (if levels 1+2 < 8 sections)
+2. LLM `extract_toc_json` on first pages text (if level 1 insufficient OR incomplete)
+3. OCR first 30 pages + HeuristicParser (escalation if 1+2 weak/ungrounded)
 4. OCR + LLM `extract_toc_json` (if OCR heuristic failed)
 5. Deep-scan: LLM on full-text chunks (SLOW — only when `enable_deep_scan=True` and still ≤3)
 6. LLM-expand: find chapters inside ЧАСТИ (when ToC is upper-level-only and `enable_llm_expand=True`)
+
+**Smart fallback (session 004):** the early-return gate is widened with `_looks_incomplete` —
+an ALGORITHMIC (no-model) signal: count ToC-entry-like lines in raw text vs heuristic items; if
+`raw_entries > items * 1.5` the heuristic is incomplete (Розенсон 4.14, Клейнман 1.76) and we fall
+through. When triggered, candidates from levels 1–4 are collected and the BEST VALIDATED one is
+chosen via `toc_validate.score_toc` (`_select_best`) — never ship unvalidated LLM output. Sources
+are invoked SEQUENTIALLY (GPU ≤90%). `_llm_from_text_retry` retries up to 3× on formal/CJK errors.
 
 ---
 
@@ -139,6 +148,25 @@ for both ToC extraction and section mapping — handles damaged, scanned, and co
 
 ---
 
+### toc_validate.py (NEW — session 004)
+- **What:** Validates/scores ToC candidates so the smart fallback can pick the best one and reject
+  LLM hallucinations. `score_toc`, `is_valid`, `check_formal`, `check_cjk`.
+- **Why it exists:** LLM ToC extraction is powerful but hallucinates / makes formal errors. This is
+  the quality gate (user requirement: quality > speed) that lets us trust LLM output.
+- **Location:** `app/services/toc_validate.py`
+- **Depends on:** `llm_engine.has_foreign_script` (CJK), `embedding_engine` (semantic grounding)
+- **Used by:** toc_builder (`_select_best`)
+- **Non-obvious:**
+  - `is_valid` = formal_ok AND no CJK AND grounding ≥ 0.8 (`GROUNDING_MIN`).
+  - **grounding** = fraction of titles that actually occur in the book text. Lexical-first
+    (significant tokens present), embedder ONLY for titles that fail lexical, capped at
+    `MAX_EMBED_CHECKS=20` (GPU cost). Catches hallucinated titles.
+  - `check_formal` allows ONE page "reset" (dual brief+detailed ToC) before flagging non-monotonic.
+  - Levels are clamped to 1..3 upstream in `toc_builder._normalize_llm_items` — do NOT also reject
+    level>3 here (a perfect 77-item Розенсон ToC was once falsely invalidated by a stray level 4).
+
+---
+
 ### pdf_utils.py
 - **What:** Text search, confidence scoring, readability check, content clean (fast_clean_chunk).
 - **Why it exists:** Shared utilities used by both mapping_pipeline and toc_builder.
@@ -169,6 +197,10 @@ for both ToC extraction and section mapping — handles damaged, scanned, and co
   - `process_large_text` uses `asyncio.gather` — LLM clean IS PARALLEL. Do not claim it's sequential.
   - `LLM_BOUNDARY_CONTEXT = 3000` — only first 3000 chars sent for boundary detection (LLM only needs start).
   - CJK-aware retry: if input text has CJK → prepend explanation prompt → if output still has CJK → scrub.
+  - `extract_toc_json` uses `_parse_toc_items` (session 004): robust JSON salvage — extracts individual
+    `{...}` objects even from TRUNCATED/malformed output (large ToC overruns max_tokens). Returns the
+    items parsed so far instead of failing the whole `json.loads`. `TOC_MAX_TOKENS=3000` (ctx 8192).
+    Has optional `extra_instruction` for retry-with-feedback.
 
 ---
 
@@ -228,7 +260,9 @@ for both ToC extraction and section mapping — handles damaged, scanned, and co
 3. `parse_pdf_neural(file_path, ...flags...)` called
 4. `check_document_readability(doc)` → if unreadable AND use_ocr → `ocr_client.ocr_document()`
 5. `build_toc(doc, ...)` → returns `(sequence, toc_source, ocr_text)`
-   - Tries heuristic → LLM → OCR+heuristic → OCR+LLM → deep_scan → LLM-expand
+   - Heuristic first; if complete (≥12, not high-level-only, not `_looks_incomplete`) → return it.
+   - Else smart fallback: collect candidates (heuristic/LLM/OCR+LLM, sequential) → `_select_best`
+     picks the best VALIDATED (formal+CJK+grounding≥0.8) → else keep heuristic. Then deep_scan/expand.
 6. Optional: `validate_toc_via_ocr(doc, sequence)` → `meta['toc_validation']`
 7. `clean_footer_header(full_text)` → removes headers/footers from page joins
 8. `map_sequence(sequence, full_text, total_pages)` → `mapped` list with start/end positions
@@ -245,6 +279,9 @@ for both ToC extraction and section mapping — handles damaged, scanned, and co
 - **Cascade always returns (sequence, source, ocr_text)**: never raise from a cascade — always return partial results
 - **progress_callback is always optional**: all cascade functions accept `progress_cb=None`
 - **_safe_print everywhere OCR output goes**: never `print()` raw OCR/LLM output without encoding safety
+- **Never ship unvalidated LLM ToC**: any LLM/OCR-derived ToC candidate must pass `toc_validate.is_valid`
+  (formal + no CJK + grounding≥0.8) before being preferred over the heuristic. Selection by grounded count.
+- **Models run sequentially**: LLM + OCR + embedder must not be resident simultaneously (GPU ≤90%).
 
 ## Tech stack
 | Layer | Tech | Version | Why chosen |
@@ -291,3 +328,8 @@ _Append only. Never delete entries._
 | 2026-05-28 | 001 | _split_sticky_toc_lines in toc_builder | OCR and PyMuPDF merge ToC lines (Иглмен case) |
 | 2026-05-28 | 001 | All flags ON by default | User preference: full capability always |
 | 2026-05-28 | 001 | _safe_print in ocr_engine + stdout.reconfigure in main | Windows cp1251 crash on U+FFFD |
+| 2026-05-29 | 004 | toc_parser: don't break on page-less «Часть/Part/Раздел»; length-guard 250 | Mechanism A — dual-ToC dropped subsections; catastrophic regex hang |
+| 2026-05-29 | 004 | NEW toc_validate.py (score/validate ToC candidates) | Trust-but-verify LLM ToC: CJK+formal+grounding |
+| 2026-05-29 | 004 | toc_builder: `_looks_incomplete` trigger + smart fallback `_select_best` | Heuristic misses subsections on messy layouts (Розенсон/Клейнман) |
+| 2026-05-29 | 004 | llm_engine: `_parse_toc_items` salvage + TOC_MAX_TOKENS + extra_instruction | LLM ToC JSON truncated/malformed; retry-with-feedback |
+| 2026-05-29 | 004 | clamp LLM ToC level to 1..3 in _normalize_llm_items | level 4 falsely invalidated a perfect ToC |

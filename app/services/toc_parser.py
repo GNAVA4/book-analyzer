@@ -109,9 +109,16 @@ class HeuristicParser:
                     continue
 
             # --- 2. ПРОВЕРКА НА ВЫХОД (Конец оглавления) ---
-            match_strict = self.item_pattern.match(line_raw)
-            match_start = self.item_pattern_start.match(line_raw)
-            match_loose = self.loose_item_pattern.match(line_raw)
+            # Пункты ToC почти не бывают длиннее ~250 символов (250–300 — потолок).
+            # Длинные строки тела книги прогонять через item_pattern опасно: ленивые
+            # .+?/.*? с альтернацией сепараторов уходят в катастрофический бэктрекинг
+            # (Клейнман подвисал). Порог 250 не режет легитимно длинные пункты.
+            if len(line_raw) <= 250:
+                match_strict = self.item_pattern.match(line_raw)
+                match_start = self.item_pattern_start.match(line_raw)
+                match_loose = self.loose_item_pattern.match(line_raw)
+            else:
+                match_strict = match_start = match_loose = None
             has_page = bool(match_strict or match_start or match_loose)
 
             # Терминатор: после "LIST OF FIGURES" / "СПИСОК ТАБЛИЦ" идут сотни
@@ -123,7 +130,12 @@ class HeuristicParser:
                 break
 
             if not has_page and self._is_content_start(norm_line, seen_titles):
-                break
+                # Не выходим, если page-less строка — разделитель «Часть/Part/Раздел».
+                # В книгах с двумя оглавлениями (краткое + детальное) такой
+                # разделитель повторно встречается ВНУТРИ детального ToC и не
+                # означает начало текста книги (Release It!).
+                if not re.match(r'^\s*(часть|part|раздел)\b', line_raw, re.IGNORECASE):
+                    break
 
             if len(line_raw) < 50 and any(m in norm_line for m in self.header_markers):
                 continue

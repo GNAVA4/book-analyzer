@@ -20,6 +20,7 @@ LLM_CHUNK_SIZE = 3_000             # максимальный размер од�
 LLM_BOUNDARY_CONTEXT = 1_000       # сколько символов даём LLM для уточнения границы
 LLM_MAX_PARALLEL = 3               # максимум параллельных вызовов к LM Studio/Ollama
 LLM_MAX_TOKENS = 1_500             # ответ; запас на reasoning-модели
+TOC_MAX_TOKENS = 3_000             # ToC может быть большим (85+ пунктов) — больше бюджета на вывод
 
 # Доля чужеземных символов (CJK, арабский, иврит, корейский) — выше этого
 # текст считаем галлюцинацией LLM («переводит» русский в китайский).
@@ -126,6 +127,38 @@ def postprocess_llm_output(text: str) -> str:
     return text.strip()
 
 
+def _parse_toc_items(raw: str) -> list:
+    """
+    Устойчивый парсинг {"items": [...]} из ответа LLM.
+
+    Сначала пробуем распарсить весь JSON. Если он битый или ОБРЕЗАН по max_tokens
+    (частый случай для большого ToC), извлекаем отдельные плоские объекты {...}
+    регуляркой и парсим каждый независимо — так уцелевшие пункты сохраняются даже
+    при обрыве массива или единичной синтаксической ошибке в одном объекте.
+    """
+    if not raw:
+        return []
+    text = _strip_markdown_fences(raw)
+    m = re.search(r'\{[\s\S]*\}', text)
+    if m:
+        try:
+            data = json.loads(m.group())
+            if isinstance(data, dict) and isinstance(data.get("items"), list):
+                return data["items"]
+        except Exception:
+            pass
+    # Salvage: каждый плоский объект отдельно (последний обрезанный — пропустится)
+    items = []
+    for obj in re.findall(r'\{[^{}]*\}', text):
+        try:
+            d = json.loads(obj)
+        except Exception:
+            continue
+        if isinstance(d, dict) and str(d.get("title", "")).strip():
+            items.append(d)
+    return items
+
+
 def _extract_message_content(message) -> str:
     """
     Извлекает текст из ответа LLM с поддержкой reasoning-моделей.
@@ -164,11 +197,15 @@ class LLMEngine:
     # Извлечение ToC
     # -----------------------------------------------------------------------
 
-    async def extract_toc_json(self, text_pages: str) -> list:
+    async def extract_toc_json(self, text_pages: str, extra_instruction: str = "") -> list:
         """
         Просит LLM извлечь оглавление из первых страниц документа.
         Возвращает список словарей {title, page, level}.
+
+        extra_instruction: дополнительная корректирующая инструкция для retry
+        (например «прошлый ответ содержал CJK / непустые ошибки — исправь»).
         """
+        correction = f"\nВАЖНО (исправление прошлой попытки): {extra_instruction}\n" if extra_instruction else ""
         prompt = (
             "Твоя роль: парсер структуры документов.\n"
             "Входные данные: текст первых страниц книги.\n"
@@ -183,7 +220,10 @@ class LLMEngine:
             "страниц внутри. Номер страницы идёт в отдельное поле \"page\".\n"
             "5. Используй язык оригинала. ЗАПРЕЩЕНО переводить заголовки на "
             "другие языки (особенно китайский, японский, корейский, арабский).\n"
-            "6. Если оглавления нет — верни {\"items\": []}.\n\n"
+            "6. Извлекай ВСЕ пункты оглавления, включая подразделы (1.1, 1.2, ...). "
+            "Не выдумывай заголовки, которых нет в тексте.\n"
+            "7. Если оглавления нет — верни {\"items\": []}.\n"
+            f"{correction}\n"
             f"Текст:\n---\n{text_pages}\n---"
         )
         try:
@@ -192,14 +232,12 @@ class LLMEngine:
                     model=self.model,
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.1,
-                    max_tokens=LLM_MAX_TOKENS,
+                    max_tokens=TOC_MAX_TOKENS,
                 )
             raw = _extract_message_content(response.choices[0].message)
-            # Извлекаем JSON-блок из произвольного текста (LM Studio не поддерживает
-            # response_format=json_object; reasoning-модели тоже могут обернуть в текст).
-            json_match = re.search(r'\{[\s\S]*\}', raw)
-            data = json.loads(json_match.group() if json_match else _strip_markdown_fences(raw))
-            return data.get("items", [])
+            # Устойчивый парсинг: спасает пункты даже из обрезанного/битого JSON
+            # (LM Studio не поддерживает response_format=json_object).
+            return _parse_toc_items(raw)
         except Exception as e:
             print(f"LLM ToC Error: {e}")
             return []

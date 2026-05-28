@@ -20,6 +20,7 @@ from typing import Callable, Awaitable
 from .toc_parser import HeuristicParser, toc_to_linear_sequence
 from .llm_engine import llm_client
 from .ocr_engine import ocr_client
+from .toc_validate import score_toc, is_valid, check_formal, check_cjk
 
 
 # Паттерн «page-число + заглавная буква» — типичная склейка пунктов ToC
@@ -288,6 +289,9 @@ def _normalize_llm_items(items: list) -> list:
             level = int(level) if level else 1
         except (TypeError, ValueError):
             level = 1
+        # Клампим до 1..3 — система (heuristic, xml_builder) работает с тремя
+        # уровнями; LLM иногда уводит глубоко вложенные пункты в level 4+.
+        level = min(max(level, 1), 3)
         page_raw = it.get("page")
         page = int(page_raw) if str(page_raw).isdigit() else None
         out.append({"title": title, "level": level, "page": page})
@@ -314,6 +318,95 @@ def _is_high_level_only(sequence: list) -> bool:
     # Если глубоких секций >= 30% от общего числа — это уже нормальный ToC,
     # не нужно ничего расширять.
     return deeper / max(len(sequence), 1) < 0.3
+
+
+# Строка-пункт ToC: «...текст... <дотлидеры/пробелы> 123» (инлайн-номер страницы)
+_TOC_INLINE_PAGE = re.compile(r'.+?(?:\.{2,}|\s{2,}|\.\s+)\s*\d{1,4}\s*$')
+_TOC_BARE_NUM = re.compile(r'^\s*\d{1,4}\s*$')
+
+
+def _count_toc_entry_lines(raw_text: str) -> int:
+    """
+    Считает строки, похожие на пункт оглавления, в сыром тексте:
+      - инлайн-номер: «Название .... 21», ИЛИ
+      - голый номер на отдельной строке, перед которым идёт текстовая строка
+        (формат «заголовок \\n страница» — Розенсон).
+    Дешёвый, без моделей. Используется для оценки неполноты эвристики.
+    """
+    lines = [l.strip() for l in raw_text.split('\n')]
+    lines = [l for l in lines if l]
+    cnt = 0
+    for i, l in enumerate(lines):
+        if len(l) > 250:
+            continue
+        if _TOC_INLINE_PAGE.match(l):
+            cnt += 1
+        elif (_TOC_BARE_NUM.match(l) and i > 0 and len(lines[i - 1]) > 3
+              and not _TOC_BARE_NUM.match(lines[i - 1])
+              and not _TOC_INLINE_PAGE.match(lines[i - 1])):
+            cnt += 1
+    return cnt
+
+
+def _looks_incomplete(seq: list, raw_text: str, ratio: float = 1.5) -> bool:
+    """
+    True если в сыром тексте ToC пунктов заметно больше, чем извлекла эвристика —
+    значит эвристика потеряла подразделы (Розенсон, Клейнман). Без моделей.
+    """
+    if not seq:
+        return True
+    raw_entries = _count_toc_entry_lines(raw_text)
+    return raw_entries > len(seq) * ratio
+
+
+async def _llm_from_text_retry(text: str, attempts: int = 3) -> list:
+    """
+    LLM-извлечение ToC с retry на ФОРМАЛЬНЫЕ ошибки (CJK, пустые/длинные title,
+    дубли, не-монотонные страницы). Grounding тут НЕ проверяем — это дорого
+    (эмбеддер), его делает финальный отбор. Возвращает лучший по формальной чистоте.
+    """
+    best: list = []
+    extra = ""
+    for _ in range(attempts):
+        items = await llm_client.extract_toc_json(text[:TOC_LLM_MAX_CHARS], extra_instruction=extra)
+        seq = _normalize_llm_items(items)
+        if not seq:
+            continue
+        cjk = check_cjk(seq)
+        formal = check_formal(seq, _count_toc_entry_lines(text))
+        if not cjk and not formal:
+            return seq  # формально чистый — отдаём сразу
+        if len(seq) > len(best):
+            best = seq
+        problems = []
+        if cjk:
+            problems.append("в заголовках были иностранные (CJK) символы — пиши на языке оригинала")
+        if formal:
+            problems.append("были формальные ошибки: " + "; ".join(formal[:3]))
+        extra = ". ".join(problems)
+    return best
+
+
+async def _select_best(candidates: list, full_text: str, raw_entry_count: int) -> tuple:
+    """
+    Скорит кандидатов (src, seq) и выбирает лучший ВАЛИДНЫЙ.
+    Приоритет: валидные > невалидные; среди валидных — больше заземлённых пунктов,
+    затем больше пунктов. Если валидных нет — берём кандидат с наибольшим
+    числом заземлённых (по умолчанию — эвристику, она всегда первый кандидат).
+    Возвращает (src, seq, score_dict).
+    """
+    scored = []
+    for src, seq in candidates:
+        if not seq:
+            continue
+        sc = await score_toc(seq, full_text, raw_entry_count)
+        scored.append((src, seq, sc))
+    if not scored:
+        return ("none", [], None)
+    valid = [c for c in scored if is_valid(c[2])]
+    pool = valid if valid else scored
+    best = max(pool, key=lambda c: (c[2]['n_grounded'], c[2]['n_total']))
+    return best
 
 
 # --- Главный pipeline --------------------------------------------------------
@@ -360,63 +453,58 @@ async def build_toc(
     # перед эвристикой — Иглмен-кейс.
     seq = _heuristic(_split_sticky_toc_lines(raw_text))
 
-    if len(seq) >= TOC_GOOD_ENOUGH and not _is_high_level_only(seq):
-        # Качественный многоуровневый ToC — можно использовать как есть
+    # Полный, не-высокоуровневый и НЕ неполный эвристический ToC — берём как есть.
+    if (len(seq) >= TOC_GOOD_ENOUGH and not _is_high_level_only(seq)
+            and not _looks_incomplete(seq, raw_text)):
         return _dedup_and_order(seq), "heuristic", None
 
-    # --- Уровень 2: дополняем LLM-ом из первых страниц ---
+    # --- Умный fallback: эвристики не хватило (мало пунктов / только верхний
+    # уровень / потеряны подразделы). Собираем кандидатов из разных источников
+    # и выбираем ЛУЧШИЙ ВАЛИДИРОВАННЫЙ (formal + без CJK + grounding в тексте).
+    # Источники вызываются ПОСЛЕДОВАТЕЛЬНО — нельзя держать LLM+OCR+эмбеддер
+    # одновременно (GPU ≤90%).
+    full_text = full_text_extractor()
+    raw_entry_count = _count_toc_entry_lines(raw_text)
+    candidates: list = [("heuristic", _dedup_and_order(seq))]
+
+    # Уровень 2: LLM из первых страниц (с retry на формальные ошибки)
     if progress_cb:
-        await progress_cb(6, "ToC: LLM extract_toc_json...")
-    llm_seq = await _llm_from_text(raw_text)
-    if len(llm_seq) > len(seq):
-        seq = llm_seq
-        source = "llm"
-    else:
-        source = "heuristic"
+        await progress_cb(6, "ToC: LLM extract_toc_json (smart)...")
+    llm_seq = await _llm_from_text_retry(raw_text)
+    if llm_seq:
+        candidates.append(("llm", _dedup_and_order(llm_seq)))
 
-    if len(seq) >= TOC_GOOD_ENOUGH and not _is_high_level_only(seq):
-        # LLM-expansion для верхнеуровневого ToC отрабатывается отдельно ниже
-        return _dedup_and_order(seq), source, None
+    best_src, best_seq, best_score = await _select_best(candidates, full_text, raw_entry_count)
 
-    # --- Уровень 3+4: OCR (картиночный ToC даже в «читаемом» PDF) ---
-    if enable_ocr and len(seq) < TOC_GOOD_ENOUGH:
+    # Уровень 3+4 (эскалация на OCR), если лучший пока невалиден или всё ещё неполон
+    need_escalation = (best_score is None or not is_valid(best_score)
+                       or _looks_incomplete(best_seq, raw_text))
+    if enable_ocr and need_escalation:
         try:
             ocr_seq, ocr_text = await _ocr_then_heuristic(doc, progress_cb)
-            if len(ocr_seq) > len(seq):
-                seq = ocr_seq
-                source = "ocr_heuristic"
-            elif ocr_text and not ocr_seq:
-                # OCR сделан, но эвристика на OCR-тексте не помогла — LLM-попытка
+            if ocr_seq:
+                candidates.append(("ocr_heuristic", _dedup_and_order(ocr_seq)))
+            if ocr_text:
                 ocr_llm_seq = await _ocr_then_llm(ocr_text)
-                if len(ocr_llm_seq) > len(seq):
-                    seq = ocr_llm_seq
-                    source = "ocr_llm"
+                if ocr_llm_seq:
+                    candidates.append(("ocr_llm", _dedup_and_order(ocr_llm_seq)))
+            best_src, best_seq, best_score = await _select_best(candidates, full_text, raw_entry_count)
         except Exception as e:
             print(f"[toc_builder] OCR failed: {e}")
             ocr_text = None
 
-    # --- Уровень 5: deep_scan — последний шанс ---
-    if enable_deep_scan and len(seq) <= TOC_MIN_USEFUL:
-        full_text = full_text_extractor() if not ocr_text else ocr_text
-        deep_seq = await _deep_scan(full_text, progress_cb)
-        if len(deep_seq) > len(seq):
-            seq = deep_seq
-            source = "deep_scan"
+    # Уровень 5: deep_scan — если ToC почти пуст
+    if enable_deep_scan and len(best_seq) <= TOC_MIN_USEFUL:
+        deep_seq = await _deep_scan(full_text if not ocr_text else ocr_text, progress_cb)
+        if deep_seq:
+            candidates.append(("deep_scan", _dedup_and_order(deep_seq)))
+            best_src, best_seq, best_score = await _select_best(candidates, full_text, raw_entry_count)
 
-    # --- Уровень 6: LLM-expansion для верхнеуровневого ToC ---
-    # Если пользователь явно включил флаг — расширяем всегда (даже когда
-    # _is_high_level_only говорит «нет»), чтобы поведение было предсказуемым.
-    # Если флаг по умолчанию (включён внутри функцией), то расширяем только
-    # когда видим высокоуровневый ToC.
-    if enable_llm_expand and _is_high_level_only(seq):
-        full_text = full_text_extractor() if not ocr_text else ocr_text
-        expanded = await _llm_expand_parts(seq, full_text, progress_cb)
-        if len(expanded) > len(seq):
-            seq = expanded
-            source = f"{source}+expand"
+    # Уровень 6: LLM-expansion для верхнеуровневого ToC (только ЧАСТЬ I/II/III без глав)
+    if enable_llm_expand and _is_high_level_only(best_seq):
+        expanded = await _llm_expand_parts(best_seq, full_text if not ocr_text else ocr_text, progress_cb)
+        if len(expanded) > len(best_seq):
+            best_seq = _dedup_and_order(expanded)
+            best_src = f"{best_src}+expand"
 
-    # Финальная нормализация: дедуп + сортировка по странице.
-    # Защищает от книг с двумя оглавлениями подряд (краткое + детальное).
-    seq = _dedup_and_order(seq)
-
-    return seq, source, ocr_text
+    return best_seq, best_src, ocr_text
