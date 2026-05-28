@@ -52,6 +52,20 @@ def count_foreign_chars(text: str) -> int:
     return len(_FOREIGN_SCRIPTS.findall(text))
 
 
+def scrub_foreign_script(text: str) -> str:
+    """
+    Удаляет CJK/арабские/корейские символы из текста.
+
+    Безопасно для латиницы (C++, std::atomic, motivation) — паттерн
+    _FOREIGN_SCRIPTS не включает латиницу. Используется как финальная
+    гарантия что в content/title не просочились иероглифы от glm-ocr
+    («动机ировать» → «ировать») независимо от пути очистки.
+    """
+    if not text:
+        return text
+    return _FOREIGN_SCRIPTS.sub('', text)
+
+
 def has_foreign_script(text: str) -> bool:
     """
     Главный детектор: возвращает True если в тексте есть подозрительная

@@ -17,7 +17,7 @@ from .pdf_utils import (
     get_confidence_stats,
     check_document_readability,
 )
-from .llm_engine import llm_client, LLM_BOUNDARY_CONTEXT
+from .llm_engine import llm_client, LLM_BOUNDARY_CONTEXT, scrub_foreign_script
 from .ocr_engine import ocr_client
 from .toc_builder import build_toc
 from .toc_validator import validate_toc_via_ocr
@@ -234,9 +234,11 @@ async def parse_pdf_neural(
                 else ""
             )
 
+        # Финальный CJK-scrub независимо от пути очистки (fast_clean не чистит
+        # иероглифы, а источник 动机 — сам OCR-текст). Latin не трогаем.
         final_nodes.append({
-            "title": title,
-            "content": clean_content,
+            "title": scrub_foreign_script(title),
+            "content": scrub_foreign_script(clean_content),
             "level": curr['item'].get('level', 1),
             "page": curr['item'].get('page', 0),
             "confidence": confidence,
@@ -245,6 +247,11 @@ async def parse_pdf_neural(
 
     if progress_callback:
         await progress_callback(97, "Формирование XML...")
+
+    # Скраб CJK в title'ах sequence — NavigationTable строится из него
+    for s in sequence:
+        if s.get('title'):
+            s['title'] = scrub_foreign_script(s['title'])
 
     doc.close()
     meta = {

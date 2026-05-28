@@ -6,11 +6,35 @@ from app.services.llm_engine import (
     detect_foreign_script,
     has_foreign_script,
     count_foreign_chars,
+    scrub_foreign_script,
     postprocess_llm_output,
     _strip_llm_preamble,
     _strip_markdown_fences,
     _extract_message_content,
 )
+
+
+class TestScrubForeignScript:
+    def test_removes_cjk(self):
+        assert scrub_foreign_script("动机ировать") == "ировать"
+
+    def test_preserves_cyrillic(self):
+        assert scrub_foreign_script("мотивировать") == "мотивировать"
+
+    def test_preserves_latin(self):
+        assert scrub_foreign_script("std::atomic<T*>") == "std::atomic<T*>"
+        assert scrub_foreign_script("motivation") == "motivation"
+
+    def test_mixed(self):
+        assert scrub_foreign_script("Целевая 动机 motivation") == "Целевая  motivation"
+
+    def test_arabic_korean(self):
+        # Удаляются арабский и корейский, пробелы между ними остаются
+        assert scrub_foreign_script("текст مرحبا 안녕 end") == "текст   end"
+
+    def test_empty(self):
+        assert scrub_foreign_script("") == ""
+        assert scrub_foreign_script(None) is None
 
 
 # ============================================================================
