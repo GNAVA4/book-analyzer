@@ -419,14 +419,19 @@
       <span class="hint">(автоматически)</span>
     </label>
     <label title="Если в ToC мало секций — попросить LLM найти главы внутри частей по тексту. Медленно.">
-      <input type="checkbox" id="optLlmExpand">
+      <input type="checkbox" id="optLlmExpand" checked>
       <span>LLM-расширение верхнеуровневого ToC</span>
       <span class="hint">(медленно)</span>
     </label>
     <label title="Если оглавление вообще не найдено — LLM проходит по всему тексту chunks и предлагает структуру. ОЧЕНЬ медленно.">
-      <input type="checkbox" id="optDeepScan">
+      <input type="checkbox" id="optDeepScan" checked>
       <span>Deep-scan (если ToC нет)</span>
       <span class="hint">(минуты)</span>
+    </label>
+    <label title="После извлечения ToC прогнать OCR ±5 страниц вокруг оглавления и проверить совпадение. Возвращает coverage-метрику.">
+      <input type="checkbox" id="optValidateTocOcr" checked>
+      <span>OCR-валидация ToC</span>
+      <span class="hint">(~1 мин)</span>
     </label>
   </div>
 
@@ -703,6 +708,7 @@
         use_ocr: document.getElementById('optUseOcr').checked,
         deep_scan: document.getElementById('optDeepScan').checked,
         llm_expand: document.getElementById('optLlmExpand').checked,
+        validate_toc_ocr: document.getElementById('optValidateTocOcr').checked,
       }));
 
       ws.onmessage = (e) => {

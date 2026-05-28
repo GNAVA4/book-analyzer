@@ -43,10 +43,10 @@ _GARBAGE_NOTICE = (
 async def parse_pdf_neural(
     file_path: str,
     progress_callback=None,
-    deep_scan: bool = False,
+    deep_scan: bool = True,
     use_ocr: bool = True,
     llm_expand: bool = True,
-    validate_toc_ocr: bool = False,
+    validate_toc_ocr: bool = True,
 ) -> tuple:
     """
     Гибридный режим: многоуровневый pipeline с отказоустойчивыми fallback'ами.

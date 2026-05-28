@@ -46,10 +46,11 @@ async def process_one(pdf_path: Path) -> dict:
     async with websockets.connect(WS_URL, max_size=64 * 1024 * 1024) as ws:
         await ws.send(json.dumps({
             "temp_id": temp_id,
-            "deep_scan": False,
+            # Все флаги включены — полный набор возможностей pipeline'а.
+            "deep_scan": True,
             "use_ocr": True,
-            "llm_expand": False,
-            "validate_toc_ocr": VALIDATE_TOC_OCR,
+            "llm_expand": True,
+            "validate_toc_ocr": True,
         }))
 
         last_pct = -1

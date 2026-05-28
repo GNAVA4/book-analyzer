@@ -356,11 +356,13 @@ class LLMEngine:
         """
         Очищает один чанк текста от артефактов PDF/OCR.
 
-        Защищён двумя гарантиями:
-          1. При обнаружении CJK/арабских символов в ответе (галлюцинация
-             «перевод» русского в китайский) — повтор с более жёстким промптом.
-          2. Если и повтор содержит чужие символы — возвращаем оригинальный
-             текст вместо мусорного LLM-вывода.
+        Защита от CJK-загрязнения (комбинированная):
+          1. Если INPUT уже содержит CJK (glm-ocr иногда возвращает 动机
+             вместо «мотив» по размытым местам) — используем CJK-aware
+             промпт, который просит LLM восстановить кириллицу по контексту.
+          2. Если ответ всё равно с CJK — retry с критическим префиксом.
+          3. Если и retry с CJK — финальный scrub: regex выкидывает все CJK
+             символы из текста (всё лучше, чем 动机 в content).
         """
         if len(text.strip()) < 10:
             return ""
@@ -377,7 +379,21 @@ class LLMEngine:
             if is_start else ""
         )
 
+        # Если в input есть CJK — добавляем CJK-aware преамбулу, чтобы LLM
+        # понимала что иероглифы это OCR-артефакт на месте кириллицы.
+        input_has_cjk = has_foreign_script(text)
+        cjk_preamble = (
+            "ВАЖНО: входной текст пришёл от OCR-модели, которая иногда "
+            "по размытым местам подставляет иероглифы (动机, 反应 и т.п.) "
+            f"на месте {target_lang.upper()}-СЛОВ. Например '动机ировать' это "
+            f"должно быть 'мотивировать'. Восстанови правильное "
+            f"{target_lang.upper()}-написание по контексту, иероглифы убери "
+            "полностью.\n\n"
+            if input_has_cjk else ""
+        )
+
         base_prompt = (
+            f"{cjk_preamble}"
             "Твоя роль: технический редактор.\n"
             "Задача: восстановить связный текст из грязного PDF/OCR-экстракта.\n\n"
             "ИНСТРУКЦИИ — выполняй строго, без отступлений:\n"
@@ -405,13 +421,18 @@ class LLMEngine:
                 )
             return _extract_message_content(response.choices[0].message)
 
+        def _scrub_cjk(s: str) -> str:
+            """Финальная гарантия: удаляем CJK/арабские/корейские символы
+            из текста. Лучше потеря 1-2 букв в слове, чем 动机 в content."""
+            if not s:
+                return s
+            return _FOREIGN_SCRIPTS.sub('', s)
+
         try:
             raw = await _call(base_prompt)
             result = postprocess_llm_output(raw)
 
-            # Защита от языковых галлюцинаций: если LLM ответила
-            # китайским/арабским/иврит/корейским — повторить с retry-промптом.
-            # Срабатывает даже на единичные иероглифы (см. has_foreign_script).
+            # Защита от языковых галлюцинаций
             if has_foreign_script(result):
                 n = count_foreign_chars(result)
                 print(f"[LLM clean] Foreign script: {n} chars, retrying...")
@@ -426,15 +447,18 @@ class LLMEngine:
                 raw = await _call(retry_prompt)
                 result = postprocess_llm_output(raw)
 
-                # Если и повтор содержит чужие символы — возвращаем оригинал
+                # Если и повтор с CJK — финальный scrub
                 if has_foreign_script(result):
-                    print("[LLM clean] Retry also failed, returning original text")
-                    return text
+                    n2 = count_foreign_chars(result)
+                    print(f"[LLM clean] Retry also has {n2} CJK chars — scrubbing")
+                    result = _scrub_cjk(result)
 
             return result
         except Exception as e:
             print(f"LLM clean error: {e}")
-            return text  # возвращаем оригинал при ошибке
+            # При полном провале LLM — возвращаем оригинал, но всё равно
+            # scrub CJK из него (источник мог быть OCR с иероглифами)
+            return _scrub_cjk(text) if has_foreign_script(text) else text
 
     # -----------------------------------------------------------------------
     # Обработка большого текста (несколько чанков параллельно)

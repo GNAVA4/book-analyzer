@@ -101,10 +101,12 @@ async def websocket_analyze(websocket: WebSocket):
     try:
         data = await websocket.receive_json()
         temp_id = data.get("temp_id")
-        deep_scan = bool(data.get("deep_scan", False))
+        # Все возможности включены по умолчанию — полный pipeline.
+        # Клиент может отключить любой флаг явно передав false.
+        deep_scan = bool(data.get("deep_scan", True))
         use_ocr = bool(data.get("use_ocr", True))
-        llm_expand = bool(data.get("llm_expand", False))
-        validate_toc_ocr = bool(data.get("validate_toc_ocr", False))
+        llm_expand = bool(data.get("llm_expand", True))
+        validate_toc_ocr = bool(data.get("validate_toc_ocr", True))
 
         if not temp_id:
             await websocket.send_json({"type": "error", "message": "temp_id не передан"})
