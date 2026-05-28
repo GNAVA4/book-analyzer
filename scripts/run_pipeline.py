@@ -17,7 +17,7 @@ import httpx
 import websockets
 
 # Force stdout flushing — useful when running piped to a file
-sys.stdout.reconfigure(line_buffering=True)
+sys.stdout.reconfigure(encoding='utf-8', errors='replace', line_buffering=True)
 
 
 API_BASE = "http://127.0.0.1:8000"

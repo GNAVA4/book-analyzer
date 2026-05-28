@@ -219,7 +219,9 @@ async def parse_pdf_neural(
             continue
 
         # Очистка: алгоритм или LLM в зависимости от confidence
-        if confidence >= CONFIDENCE_THRESHOLD:
+        if confidence >= CONFIDENCE_THRESHOLD or curr.get('match_strategy') == 'page_cut':
+            # page_cut: заголовок отсутствует в тексте, позиция приблизительная —
+            # boundary detection бессмысленен, fast_clean достаточно.
             clean_content = fast_clean_chunk(raw_chunk)
         else:
             boundary_offset = await llm_client.fix_chapter_boundary(

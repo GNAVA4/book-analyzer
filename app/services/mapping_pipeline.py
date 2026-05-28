@@ -415,6 +415,31 @@ async def map_sequence(
     if restored:
         print(f"[mapping] restored {restored} page-distance reverts (rescue not helpful)")
 
+    # --- Финальный fallback: page_cut для секций у которых всё rescue провалилось ---
+    # Когда заголовок секции физически отсутствует в тексте (крупная типографика,
+    # скан, декоративный шрифт — PyMuPDF не извлекает), нарезаем контент по
+    # позиции страницы из ToC вместо по совпадению с заголовком.
+    # Это лучше чем conf=0.00 / пустой контент — контент будет, хотя и без
+    # точного выравнивания по заголовку.
+    if total_pages:
+        page_cut = 0
+        for m in mapped:
+            if m['start_idx'] != -1:
+                continue
+            page = m['item'].get('page')
+            if not page:
+                continue
+            est = _estimate_position_from_page(page, total_pages, full_text_len)
+            if est <= 0:
+                continue
+            m['start_idx'] = est
+            m['end_idx'] = est  # content = full_text[est : next_start]
+            m['confidence'] = 0.30
+            m['match_strategy'] = 'page_cut'
+            page_cut += 1
+        if page_cut:
+            print(f"[mapping] page_cut fallback: {page_cut} sections")
+
     # Финальная проверка ПОРЯДКА (out-of-order). In-ToC уже проверен в начале;
     # после rescue могут появиться новые out-of-order — их нужно отловить.
     mapped = _verify_and_correct_order(mapped, full_text, full_text_len, total_pages)
@@ -504,6 +529,10 @@ def _verify_and_correct_order(
         if m['start_idx'] == -1:
             continue
         strat = m.get('match_strategy', '')
+        # page_cut — позиция приблизительная (оценка по странице), не используем
+        # её для якоря running_max и не ревертируем её как out-of-order.
+        if strat == 'page_cut':
+            continue
         if running_max > 0 and m['start_idx'] < running_max - 1000:
             if strat in ('embedding_rescue', 'llm_rescue') or 'page_hint' in strat:
                 m['start_idx'] = -1
