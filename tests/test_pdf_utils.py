@@ -12,7 +12,38 @@ from app.services.pdf_utils import (
     clean_footer_header,
     get_clean_title,
     _search_with_confidence,
+    _is_list_context,
+    _find_first_nonlist,
 )
+
+
+class TestListContextPreference:
+    """Заголовки не должны матчиться в буллетной сводке/мини-оглавлении тела."""
+
+    def test_is_list_context_bullet(self):
+        assert _is_list_context("• Так в чем же состоит предмет", 0) is True
+
+    def test_is_list_context_leader_dots(self):
+        assert _is_list_context(". . . . . . . 59", 0) is True
+
+    def test_is_list_context_prose_is_false(self):
+        assert _is_list_context("Чем чаще повторяется какое-то слово, тем", 0) is False
+
+    def test_prefers_body_occurrence_over_bulleted_list(self):
+        # сводка с буллетами в начале тела, реальный заголовок+проза — позже
+        body = "Эссе…"
+        toc_summary = "• Что такое дизайн? • Так в чем же"
+        real = "Что такое дизайн?\nЧем чаще повторяется какое-то слово, тем привычнее"
+        full = body + toc_summary + " ... " + real
+        title = "Что такое дизайн?"
+        idx = _find_first_nonlist(full, title, 0)
+        # должно вернуть вхождение в real-части (после которого проза), а не в сводке
+        assert full[idx + len(title): idx + len(title) + 5].strip().startswith("Чем")
+
+    def test_falls_back_to_first_when_all_list(self):
+        full = "• Глоссарий\n• Указатель"
+        idx = _find_first_nonlist(full, "Глоссарий", 0)
+        assert idx == full.find("Глоссарий")  # все списочные → первое
 
 
 # ============================================================================

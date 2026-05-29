@@ -367,22 +367,29 @@ async def _llm_from_text_retry(text: str, attempts: int = 3) -> list:
     """
     best: list = []
     extra = ""
+    raw_entries = _count_toc_entry_lines(text)
+    # Ожидаемый минимум пунктов: LLM недетерминирован и иногда возвращает
+    # обрезанный ToC (Клейнман: то 57, то 7). Если в сыром тексте видно ~N
+    # строк-пунктов, а LLM вернул сильно меньше — это неполный ответ, ретраим.
+    expected_min = max(8, int(raw_entries * 0.5))
     for _ in range(attempts):
         items = await llm_client.extract_toc_json(text[:TOC_LLM_MAX_CHARS], extra_instruction=extra)
         seq = _normalize_llm_items(items)
-        if not seq:
-            continue
-        cjk = check_cjk(seq)
-        formal = check_formal(seq, _count_toc_entry_lines(text))
-        if not cjk and not formal:
-            return seq  # формально чистый — отдаём сразу
-        if len(seq) > len(best):
+        if seq and len(seq) > len(best):
             best = seq
+        cjk = check_cjk(seq) if seq else []
+        formal = check_formal(seq, raw_entries) if seq else ['empty']
+        too_few = bool(seq) and len(seq) < expected_min
+        if seq and not cjk and not formal and not too_few:
+            return seq  # формально чистый и достаточно полный — отдаём
         problems = []
         if cjk:
             problems.append("в заголовках были иностранные (CJK) символы — пиши на языке оригинала")
         if formal:
             problems.append("были формальные ошибки: " + "; ".join(formal[:3]))
+        if too_few or not seq:
+            problems.append(f"извлечено слишком мало пунктов ({len(seq)}); в оглавлении их около "
+                            f"{raw_entries} — извлеки ВСЕ пункты, включая ВСЕ подразделы (1.1, 1.2, …)")
         extra = ". ".join(problems)
     return best
 

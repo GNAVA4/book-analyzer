@@ -101,7 +101,8 @@ async def main():
         far = 'FAR' if (dist >= 0 and dist > tol) else ''
         rt = f"{ratio:.2f}" if ratio is not None else "  -"
         mark = '!!' if flag else '  '
-        print(f"{mark}{i:>3} {m['confidence']:>5.2f} {m['start_idx']:>8} {est:>8} {dist:>8} {rawlen:>7} {(exp or 0):>7} {rt:>6} {m.get('match_strategy','')[:13]:<14}{m['item'].get('title','')[:34]} {flag}{far}")
+        prev = repr(full_text[start:end].strip()[:34]) if "--preview" in sys.argv else ''
+        print(f"{mark}{i:>3} {m['confidence']:>5.2f} {m['start_idx']:>8} {est:>8} {dist:>8} {rawlen:>7} {(exp or 0):>7} {rt:>6} {m.get('match_strategy','')[:13]:<14}{m['item'].get('title','')[:30]} {flag}{far} {prev}")
 
 
 if __name__ == "__main__":

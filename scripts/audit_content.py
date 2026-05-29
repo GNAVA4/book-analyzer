@@ -21,7 +21,7 @@ import fitz
 
 ROOT = Path(__file__).resolve().parent.parent
 PDF_DIR = ROOT / "test"
-XML_DIR = ROOT / "test_v2"
+XML_DIR = ROOT / __import__("os").environ.get("AUDIT_XML_DIR", "test_v2")
 
 CJK_RE = re.compile(r'[一-鿿㐀-䶿]')
 

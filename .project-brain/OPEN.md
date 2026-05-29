@@ -25,14 +25,30 @@ _(nothing active)_
   Re-measure with new mapping (Fix A/B) before investigating further.
 - [ ] **parallelnoe appendix D** — dense std:: reference entries get mis-located by embedding_rescue
   (TRUNC/BLOAT in D.x). Pre-existing, NOT caused by Fix A/B. Separate from class 2; low priority.
-- [ ] **Re-run full pipeline + re-audit all 11 books** with session-004 changes (ToC + mapping) to
-  refresh test_v2 baseline and confirm corpus-wide improvement. Needs LM Studio.
+- [x] **Re-ran full pipeline → tests_v3** (12 books, incl. new ВКР) with session-004 changes. Audited.
+  Wins: Release It! 31→126, Розенсон ToC 20→77, Do Good content fixed. Regressions/breakage found —
+  see Open bugs above.
 - [ ] **report.json content_len/preview are all 0** (test_v2) — post-hoc artifact (session 003 script
   edited mid-run). Source of truth for content = the XML, not the report. Regenerate reports if needed.
 - [ ] **Fix PIPELINE_DIFF.md note** — says "LLM clean is sequential", actually asyncio.gather. Docs only.
 
-## Open bugs
-_(none P0)_
+## Open bugs (found in tests_v3 corpus audit, 2026-05-29)
+- [x] **FIXED** `bug_2026-05-29_subsection-maps-into-toc.md` — list-context match preference
+  (`_find_first_nonlist`/`_is_list_context` in pdf_utils). Розенсон/Кениг bodies recovered (ratio ~1.0).
+  Residual: Кениг «3.Свет»/«4.Текстура» (non-bulleted crammed cluster) + a few divider empties.
+- [x] **FIXED** `bug_2026-05-29_kleinman-pagecut-regression.md` — root was wrong-occurrence cascade
+  (NOT Fix A); same list-context fix resolved it (heuristic-40 now 0 page_cut, cov ~0.98). Plus LLM
+  ToC retry-on-too-few-items added (completeness robustness).
+- [ ] `bug_2026-05-29_vkr-toc-duplicate-chapter.md` — ВКР: ГЛАВА 1 duplicated at end of ToC (empty
+  page) + intro gets ToC fragment.
+- [ ] `bug_2026-05-29_ocr-drops-parseable-pages.md` — glm-ocr 400 drops readable pages (0e6e53b
+  pp.25/120/137/174); needs retry/fallback.
+- [ ] MIL-STD ~92 short clauses exact-matched but empty (dense standard) — characterize/fix.
+- [ ] parallelnoe appendix D — embedding_rescue mis-locates dense std:: reference (pre-existing).
+
+Synthesis: [[insight_2026-05-29_corpus-content-audit-v3]] — ToC extraction is good now; **subsection
+content MAPPING** is the bottleneck. Metric lesson: coverage / "real>100" MASK misplacement — use
+content-quality (junk/ToC-fragment) checks, not length.
 
 ## Closed this session
 - [x] `bug_2026-05-28_part-divider-absorbs-chapter-body.md` — content misplacement (class 2). FIXED.

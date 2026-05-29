@@ -1,0 +1,40 @@
+# BUG: OCR handling drops parseable pages on glm-ocr 400 ("Failed to parse input")
+_Filed: 2026-05-29 session 004 | Status: open_
+
+## Symptom
+During the tests_v3 run, 0e6e53b lost content from pages 25, 120, 137, 174 — glm-ocr returned
+HTTP 400 `{'error': 'Failed to parse input at pos 0: …'}` for those pages, so their text is missing
+from the OCR output (and thus from the XML). The USER confirmed the text on those pages is fine /
+readable — so this is OUR handling bug, not unreadable pages.
+
+Example error:
+```
+OCR page 25 failed: Error code: 400 - {'error': 'Failed to parse input at pos 0:
+\n8-e правило\nДелегируйте!\n\nВы должны знать, какую работу можете выполнить сами…'}
+```
+The 400 body actually CONTAINS the OCR'd text (the model produced output but the API/our request
+framing rejected it at parse pos 0 — looks like the model's response or our message payload tripped a
+JSON/parse path).
+
+## To reproduce
+Re-run 0e6e53b through OCR; observe "OCR page N failed: Error code: 400" for pp.25/120/137/174.
+
+## Root cause (hypothesis)
+glm-ocr / LM Studio returns 400 "Failed to parse input at pos 0" for certain pages. The error text
+embeds the page content, suggesting the failure is in request/response parsing (possibly an
+oversized or specially-charactered image payload, or a response the OpenAI client can't parse), not
+a genuine OCR failure. Our `ocr_engine` treats the 400 as a hard per-page failure and skips the page
+(no retry / no fallback), losing the content.
+
+## Fix (directions)
+- Add retry/fallback in `ocr_engine` for per-page 400s: retry once (e.g. lower image DPI / re-encode),
+  and/or fall back to the PyMuPDF text for that page if available.
+- Investigate the 400 itself: is it payload size, image encoding, or a response-parse issue in the
+  client path? The error embedding the text hints the model produced output — capture and use it.
+
+## Affected files
+- `app/services/ocr_engine.py` — per-page error handling (`OCR_PAGE_TIMEOUT_SEC` area, the 400 path).
+
+## Notes
+- Low-severity for 0e6e53b overall (35/35 sections still produced), but it's silent content loss on
+  good pages — should be made robust.

@@ -105,7 +105,10 @@ async def process_one(pdf_path: Path) -> dict:
     try:
         root = ET.fromstring(result["xml"])
         for sec in root.findall(".//section"):
-            content = sec.text or ""
+            # Контент лежит в дочернем <content>, а не в sec.text — иначе
+            # content_len/preview всегда 0 (баг отчётов test_v2).
+            c = sec.find("content")
+            content = (c.text if c is not None else sec.text) or ""
             report["sections"].append({
                 "title": sec.get("title", ""),
                 "page": sec.get("page", ""),

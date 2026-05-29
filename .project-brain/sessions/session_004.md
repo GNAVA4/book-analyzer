@@ -117,9 +117,43 @@ Change History (5 записей сессии 004).
   scripts/mapping_audit.py (NEW).
 - architecture.md обновлён (mapping non-obvious A/B, cascade levels 8-9, Change History).
 
+## Полный прогон tests_v3 + аудит (СДЕЛАНО)
+Почистили 8 завис./устаревших процессов (старый Python3.11 uvicorn держал :8000 — landmine).
+Сделали `scripts/run_corpus.py` (прямой вызов parse_pdf_neural, БЕЗ uvicorn — обход landmine).
+Прогнали 12 книг (вкл. новую ВКР) → `tests_v3/`. qwen JIT-нулась на ctx 8k (подтвердил пользователь).
+Аудит (`audit_content.py` + AUDIT_XML_DIR=tests_v3), СКОРРЕКТИРОВАН ручной сверкой пользователя.
+
+**Выводы (детально — [[insight_2026-05-29_corpus-content-audit-v3]]):**
+- Победы: Release It! 31→126 real, Розенсон ToC 20→77, Do Good контент корректен, Массель/Иглмен/Виды ok.
+- ToC-извлечение хорошее, но **маппинг подразделов** — новое узкое место.
+- Я ОШИБСЯ по Розенсону/Кенигу: доверился coverage/real-count, а они маскируют смещение (считают
+  точки/«•»/фрагменты ToC за контент). Розенсон/Кениг сильно битые (подразделы матчатся в зоне ToC).
+- **Клейнман — регрессия** (Fix A → page_cut по ненадёжной странице; cov 0.98→0.10).
+- ВКР — дубль ГЛАВА 1 в ToC + intro = фрагмент ToC. 0e6e53b — OCR уронил читаемые стр.25/120/137/174.
+
+**Заведены баги:** subsection-maps-into-toc (HIGH), kleinman-pagecut-regression, vkr-toc-duplicate-chapter,
+ocr-drops-parseable-pages. Метрик-урок дописан в content-audit-method.
+
+## Фиксы качества маппинга (СДЕЛАНО)
+- **subsection-into-ToC (Розенсон/Кениг)** — `find_real_indices` брал ПЕРВОЕ вхождение, а оно у этих
+  книг в буллетной сводке/точечной зоне тела → контент «•»/точки. Фикс в `pdf_utils._search_with_confidence`:
+  `_is_list_context` + `_find_first_nonlist`/`_first_nonlist_match` — предпочитать вхождение с прозой
+  после него (fallback на первое, если все списочные). Розенсон/Кениг: тела восстановлены (ratio ~1.0).
+- **Клейнман-«регрессия»** — мой первый диагноз (Fix A) ОШИБОЧЕН. Реальная причина: тот же
+  wrong-occurrence cascade (ранний матч не туда → current_pos улетал → последующие → page_cut). Тот же
+  list-context фикс ВЫЛЕЧИЛ Клейнмана: heuristic-40 теперь 36 exact+4 exact_normalized, 0 page_cut,
+  «Введение» 121709 (=OLD), cov ~0.98.
+- **LLM ToC retry-on-too-few** (`_llm_from_text_retry`) — LLM недетерминирован (Клейнман: то 57, то 7
+  пунктов); ретраим, если пунктов сильно меньше числа строк-пунктов в сыром тексте. Бонус-устойчивость.
+- Проверки: Release It! (126/129) и Do Good — без регрессий (тот же набор флагов). 269 тестов (+5 новых
+  в test_pdf_utils). Иглмен — ToC всегда был llm (эвристика даёт 6 верхнеуровневых; не регрессия).
+
 ## ДАЛЕЕ
-- Прогнать полный пайплайн на всех 11 книгах с правками сессии 004 (ToC + mapping) → обновить
-  baseline test_v2 + corpus-аудит. Нужен LM Studio.
+- Остаток subsection-into-ToC: Кениг «3.Свет»/«4.Текстура» (не-буллетный кластер коротких заголовков).
+- `bug_2026-05-29_vkr-toc-duplicate-chapter` (дубль ГЛАВА 1), MIL-STD 92 пустых, OCR-retry (0e6e53b).
+- Перепрогнать tests_v3 после этих фиксов → подтвердить корпус-улучшение.
+- Новые скрипты: run_corpus.py, audit_content.py (AUDIT_XML_DIR env). tests_v3/ — новый baseline
+  (отчёты с РЕАЛЬНЫМ content_len, баг test_v2 с нулями исправлен в run_pipeline.py + run_corpus.py).
 - Мелочи: «Об авторе» Do Good (кривая страница в ToC, ratio 0.16); parallelnoe приложение D
   (embedding_rescue в плотном std::-справочнике — пред-существующее, не от Класса 2).
 - Опционально: ctx LM Studio → ~24K + TOC_MAX_TOKENS ~6000 (для ToC > ~85 пунктов).

@@ -246,6 +246,66 @@ def find_toc_boundary(full_text: str, sequence: list) -> int:
 # Confidence-based поиск
 # ---------------------------------------------------------------------------
 
+_LIST_BULLETS = '•·‣◦●▪–-—*'
+
+
+def _is_list_context(full_text: str, end_idx: int, window: int = 140) -> bool:
+    """
+    True если текст СРАЗУ после позиции end_idx выглядит как пункт списка/сводки,
+    а не как начало прозы. Признаки: ведущий буллет «•», цепочка точек-лидеров,
+    либо очень близко (в пределах ~50 симв.) идёт следующий буллет — типичная
+    буллетная сводка/мини-оглавление в теле книги (Розенсон), куда ошибочно
+    матчатся заголовки подразделов.
+    """
+    seg = full_text[end_idx:end_idx + window]
+    s = seg.lstrip()
+    if not s:
+        return False
+    if s[0] in _LIST_BULLETS:
+        return True
+    # точки-лидеры (оглавление): «. . . .» или «....»
+    if seg[:12].count('.') >= 4:
+        return True
+    # следующий буллет совсем рядом → подряд идущие пункты списка
+    nxt = seg.find('•')
+    if 0 <= nxt <= 50:
+        return True
+    return False
+
+
+def _find_first_nonlist(full_text: str, title: str, from_pos: int, max_occ: int = 8) -> int:
+    """
+    Возвращает индекс первого вхождения title от from_pos, после которого НЕ список
+    (не буллет/не точки). Если все вхождения «списочные» — возвращает первое
+    (поведение по умолчанию). -1 если вхождений нет.
+    """
+    pos = from_pos
+    first = -1
+    for _ in range(max_occ):
+        idx = full_text.find(title, pos)
+        if idx == -1:
+            break
+        if first == -1:
+            first = idx
+        if not _is_list_context(full_text, idx + len(title)):
+            return idx
+        pos = idx + len(title)
+    return first
+
+
+def _first_nonlist_match(pattern, full_text: str, from_pos: int, max_occ: int = 8):
+    """Аналог _find_first_nonlist для compiled regex: первый non-list match, иначе первый."""
+    first = None
+    for i, m in enumerate(pattern.finditer(full_text, from_pos)):
+        if i >= max_occ:
+            break
+        if first is None:
+            first = m
+        if not _is_list_context(full_text, m.end()):
+            return m
+    return first
+
+
 def _search_with_confidence(
     full_text: str,
     full_title: str,
@@ -254,13 +314,16 @@ def _search_with_confidence(
     start_pos: int,
 ) -> dict | None:
 
-    # Стратегия 1: точное совпадение
+    # Стратегия 1: точное совпадение.
+    # Предпочитаем вхождение, после которого идёт проза, а не буллет/точки —
+    # иначе заголовок матчится в буллетной сводке/мини-оглавлении в теле книги
+    # (Розенсон), и секция получает контент «•» вместо реального тела.
     for title in [full_title, clean_title]:
         if not title:
             continue
-        idx = full_text.find(title, current_pos)
+        idx = _find_first_nonlist(full_text, title, current_pos)
         if idx == -1:
-            idx = full_text.find(title, start_pos)
+            idx = _find_first_nonlist(full_text, title, start_pos)
         if idx != -1:
             return {'start': idx, 'end': idx + len(title),
                     'confidence': CONF_EXACT, 'strategy': 'exact'}
@@ -272,9 +335,9 @@ def _search_with_confidence(
             continue
         pattern_str = r'[\s\W]*?'.join(re.escape(t) for t in tokens)
         pattern = re.compile(pattern_str, re.IGNORECASE | re.DOTALL)
-        match = pattern.search(full_text, current_pos)
+        match = _first_nonlist_match(pattern, full_text, current_pos)
         if not match:
-            match = pattern.search(full_text, start_pos)
+            match = _first_nonlist_match(pattern, full_text, start_pos)
         if match:
             # Промоут до conf=1.0 если match отличается от title только пробелами:
             # одна нормализация пробельных символов с обеих сторон — и они равны.

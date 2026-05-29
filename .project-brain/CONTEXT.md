@@ -36,10 +36,18 @@ Content-quality audit DONE → 3 defect classes. ToC (class 1) FIXED. NEXT: clas
 - **Smart LLM/OCR ToC fallback DONE & live-verified** (ADR 003): incomplete heuristic (algorithmic
   trigger, no models) → LLM extract w/ retry → validate (CJK+formal+grounding≥0.8) → pick best valid.
   Розенсон 20→77 (llm), Клейнман 41→57 (llm); complete books untouched (no model calls); 260 tests pass.
-- **Class 2 content misplacement FIXED** (mapping_pipeline): Fix A (defer far page-distance reverts
-  to page_cut, not restore) + Fix B (`_revert_position_clusters`: crammed back-matter title clusters
-  → page_cut). Release It! resolved by ToC subsections; Do Good ratios ~1.0; no regressions; 264 tests.
-- **NEXT (suggested):** re-run full pipeline on all 11 books to refresh test_v2 baseline + corpus audit.
+- **Class 2 content misplacement** (mapping_pipeline): Fix A (defer far page-distance reverts to
+  page_cut) + Fix B (`_revert_position_clusters`). Fixed Do Good; Release It! resolved by ToC subsections.
+- **tests_v3 full re-run (12 books) + audit DONE.** Wins: Release It! 31→126 real, Розенсон ToC 20→77,
+  Do Good content correct. BUT audit (corrected by user's manual check) found new breakage:
+  - **Subsection MAPPING is now the bottleneck** — Розенсон/Кениг subsections match in ToC region →
+    content = dots/"•"/fragments (bug_2026-05-29_subsection-maps-into-toc, HIGH).
+  - **Клейнман REGRESSION** — Fix A page_cut on unreliable page-est, cov 0.98→0.10.
+  - ВКР ToC dup ГЛАВА 1; 0e6e53b OCR drops readable pages. See OPEN.md + insight_2026-05-29_corpus-content-audit-v3.
+- **FIXED post-audit**: subsection-into-ToC (Розенсон/Кениг — list-context match preference) + Клейнман
+  (same fix; was a current_pos cascade, not Fix A) + LLM ToC retry-on-too-few. 269 tests; no regressions.
+- **NEXT:** ВКР ToC dup (ГЛАВА 1 at end), MIL-STD 92 empty short clauses, OCR retry (0e6e53b);
+  Кениг residual «3.Свет»/«4.Текстура»; re-run tests_v3 to confirm corpus-wide gains.
 
 ## Audit tooling (session 004, scripts/)
 - `audit_content.py` — per-section ratio = XML content_len / PDF page-range text len (offset-anchored).
@@ -70,9 +78,21 @@ Content-quality audit DONE → 3 defect classes. ToC (class 1) FIXED. NEXT: clas
   never ship unvalidated LLM ToC. See ADR 003.
 - **Content slicing is text-order based**: section content = full_text[end_idx : nearest start_idx in
   text]. Misplacement happens when matched positions violate ToC order → divider/neighbour absorbs body.
-- **Mapping Class-2 guards**: (A) far page-distance reverts defer to page_cut when page known (not
-  restore — restore re-adds false positives); (B) `_revert_position_clusters` reverts ≥3 crammed
-  back-matter title matches to page_cut. Rich subsection ToC also mitigates this (anchors).
+- **Mapping Class-2 guards**: (A) far page-distance reverts defer to page_cut when page known; (B)
+  `_revert_position_clusters` reverts ≥3 crammed back-matter title matches to page_cut.
+- **Match the PROSE occurrence, not the list one** (`_find_first_nonlist`/`_is_list_context` in
+  pdf_utils): titles often appear first in an in-body bulleted summary / leader-dot ToC; matching there
+  gives "•"/dots content AND cascades `current_pos` forward (later titles → page_cut). Prefer the
+  occurrence followed by prose. This fixed Розенсон/Кениг subsections AND Клейнман (the latter was a
+  current_pos cascade, NOT a Fix A regression as first thought).
+- **LLM ToC is non-deterministic** — can return far fewer items than it should; `_llm_from_text_retry`
+  retries when items << raw ToC entry count.
+- **Audit metric trap**: `coverage` and "real sections >100 chars" MASK misplacement — they count
+  dots/"•"/ToC fragments as content and stay high when text is merely misplaced (Розенсон cov 0.986
+  while broken). Judge content QUALITY (does body match its title / is it junk), not length/coverage.
+- **page_cut quality depends on linear pagination**: page_cut is only as good as
+  `(page-1)/total_pages × text_len`. For books with uneven text/figure density (Клейнман) the estimate
+  is far off → page_cut misplaces. Trust text matches over page_cut when pagination is non-linear.
 
 ## Known landmines ⚠️
 - **GPU max 90%**: at 100% user's display disappears — never load all models simultaneously
