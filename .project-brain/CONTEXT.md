@@ -36,7 +36,10 @@ Content-quality audit DONE → 3 defect classes. ToC (class 1) FIXED. NEXT: clas
 - **Smart LLM/OCR ToC fallback DONE & live-verified** (ADR 003): incomplete heuristic (algorithmic
   trigger, no models) → LLM extract w/ retry → validate (CJK+formal+grounding≥0.8) → pick best valid.
   Розенсон 20→77 (llm), Клейнман 41→57 (llm); complete books untouched (no model calls); 260 tests pass.
-- **NEXT: Class 2 content misplacement** in mapping_pipeline (bug part-divider-absorbs-chapter-body).
+- **Class 2 content misplacement FIXED** (mapping_pipeline): Fix A (defer far page-distance reverts
+  to page_cut, not restore) + Fix B (`_revert_position_clusters`: crammed back-matter title clusters
+  → page_cut). Release It! resolved by ToC subsections; Do Good ratios ~1.0; no regressions; 264 tests.
+- **NEXT (suggested):** re-run full pipeline on all 11 books to refresh test_v2 baseline + corpus audit.
 
 ## Audit tooling (session 004, scripts/)
 - `audit_content.py` — per-section ratio = XML content_len / PDF page-range text len (offset-anchored).
@@ -65,6 +68,11 @@ Content-quality audit DONE → 3 defect classes. ToC (class 1) FIXED. NEXT: clas
   > 1.5 ⇒ incomplete ⇒ run smart LLM/OCR fallback. Books below threshold are NOT touched.
 - **Smart ToC fallback validates against hallucination**: CJK + formal + embedding grounding≥0.8;
   never ship unvalidated LLM ToC. See ADR 003.
+- **Content slicing is text-order based**: section content = full_text[end_idx : nearest start_idx in
+  text]. Misplacement happens when matched positions violate ToC order → divider/neighbour absorbs body.
+- **Mapping Class-2 guards**: (A) far page-distance reverts defer to page_cut when page known (not
+  restore — restore re-adds false positives); (B) `_revert_position_clusters` reverts ≥3 crammed
+  back-matter title matches to page_cut. Rich subsection ToC also mitigates this (anchors).
 
 ## Known landmines ⚠️
 - **GPU max 90%**: at 100% user's display disappears — never load all models simultaneously

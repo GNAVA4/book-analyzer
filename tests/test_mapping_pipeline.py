@@ -8,8 +8,55 @@ from app.services.mapping_pipeline import (
     _page_hint_search,
     _estimate_position_from_page,
     _fuzzy_locate,
+    _revert_position_clusters,
     map_sequence,
 )
+
+
+# ============================================================================
+# _revert_position_clusters — Класс-2: главы матчатся кучей в задней части
+# ============================================================================
+
+class TestRevertPositionClusters:
+    def _m(self, page, start, strat='exact'):
+        return {'item': {'page': page}, 'start_idx': start, 'end_idx': start + 10,
+                'confidence': 1.0, 'match_strategy': strat}
+
+    def test_reverts_crammed_run_with_spread_pages(self):
+        # 5 глав втиснуты в ~3K символов, а их страницы разнесены (10..120)
+        # total_pages=200, full_text_len=268000 -> ест разнесены на десятки K.
+        mapped = [
+            self._m(10, 246000), self._m(40, 246800), self._m(70, 247500),
+            self._m(100, 248300), self._m(120, 249000),
+        ]
+        n = _revert_position_clusters(mapped, 268000, 200)
+        assert n == 5
+        assert all(m['start_idx'] == -1 and m['match_strategy'] == 'reverted_cluster' for m in mapped)
+
+    def test_does_not_revert_legit_close_sections(self):
+        # позиции близко И страницы близко (реальные соседние подразделы) — не трогаем
+        mapped = [
+            self._m(10, 5000), self._m(11, 5800), self._m(12, 6500),
+        ]
+        n = _revert_position_clusters(mapped, 268000, 200)
+        assert n == 0
+
+    def test_does_not_revert_spread_positions(self):
+        # страницы разнесены И позиции разнесены (нормальные тела) — не трогаем
+        mapped = [
+            self._m(10, 10000), self._m(40, 50000), self._m(70, 95000),
+        ]
+        n = _revert_position_clusters(mapped, 268000, 200)
+        assert n == 0
+
+    def test_ignores_page_cut_and_short_runs(self):
+        # page_cut не трогаем; прогон < 3 не ревертим
+        mapped = [
+            self._m(10, 246000, strat='page_cut'), self._m(40, 246500),
+            self._m(70, 247000),
+        ]
+        n = _revert_position_clusters(mapped, 268000, 200)
+        assert n == 0  # только 2 не-page_cut подряд -> < CLUSTER_MIN
 
 
 # ============================================================================

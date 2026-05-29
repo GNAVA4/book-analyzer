@@ -70,6 +70,15 @@ VERIFY_OUT_OF_ORDER_TOLERANCE = 3
 # на 5-10 страниц), и страницы в ToC могут не совпадать с физической нумерацией PDF.
 PAGE_DISTANCE_TOLERANCE_RATIO = 0.30
 
+# Детекция «кластера» (Класс 2): прогон из >= CLUSTER_MIN подряд идущих по ToC
+# секций, чьи НАЙДЕННЫЕ позиции втиснуты в <= CLUSTER_SPAN символов, тогда как их
+# оценки по страницам разнесены на >= CLUSTER_PAGE_SPAN — это список глав/задник
+# (Do Good: Главы 8-12 в 3K символов при разбросе оценок 50K), а не реальные тела.
+# Реверт прогона -> page_cut расставит их по страницам.
+CLUSTER_MIN = 3
+CLUSTER_SPAN = 4_000
+CLUSTER_PAGE_SPAN = 15_000
+
 
 def _estimate_position_from_page(page: int, total_pages: int, full_text_len: int) -> int:
     """Приближённо переводит номер страницы в позицию в char-stream."""
@@ -403,21 +412,38 @@ async def map_sequence(
     # возвращаем оригинальный exact-match. Лучше «возможно ложная позиция»
     # чем «никакой позиции».
     restored = 0
+    deferred = 0
     for m in mapped:
         if m.get('_backup') and m['start_idx'] == -1:
-            b = m['_backup']
-            m['start_idx'] = b['start_idx']
-            m['end_idx'] = b['end_idx']
-            m['confidence'] = b['confidence'] * 0.7  # снижаем уверенность
-            m['match_strategy'] = b['match_strategy'] + '_restored_after_rescue_fail'
-            restored += 1
+            # Матч был отвергнут page-distance как подозрительный (далеко от
+            # ожидаемой страницы — типичный ложняк: заголовок в задней «оглавлении»
+            # / глоссарии / списке глав). Восстанавливать его = вернуть ложное
+            # срабатывание (Do Good: «Об авторе» получал copyright-текст; Главы
+            # 1/3/5/7 — текст из задника). Раз у секции есть номер страницы —
+            # отдаём её page_cut'у (поставит позиционно по странице, ниже).
+            # Restore оставляем ТОЛЬКО когда страницы нет (page_cut не сможет помочь).
+            if m['item'].get('page'):
+                deferred += 1
+            else:
+                b = m['_backup']
+                m['start_idx'] = b['start_idx']
+                m['end_idx'] = b['end_idx']
+                m['confidence'] = b['confidence'] * 0.7  # снижаем уверенность
+                m['match_strategy'] = b['match_strategy'] + '_restored_after_rescue_fail'
+                restored += 1
         m.pop('_backup', None)
-    if restored:
-        print(f"[mapping] restored {restored} page-distance reverts (rescue not helpful)")
+    if restored or deferred:
+        print(f"[mapping] page-distance reverts: restored {restored} (no page), "
+              f"deferred {deferred} to page_cut")
 
     # Финальная проверка ПОРЯДКА (out-of-order). In-ToC уже проверен в начале;
     # после rescue могут появиться новые out-of-order — их нужно отловить.
     mapped = _verify_and_correct_order(mapped, full_text, full_text_len, total_pages)
+
+    # Реверт «кластера»: главы, чьи заголовки массово матчатся кучей в задней
+    # части (список глав/индекс), а тела разбросаны по книге → page_cut.
+    if total_pages:
+        _revert_position_clusters(mapped, full_text_len, total_pages)
 
     # --- Финальный fallback: page_cut для секций у которых всё rescue провалилось ---
     # Запускается ПОСЛЕ финального verify — иначе секции, найденные rescue но откащенные
@@ -446,6 +472,57 @@ async def map_sequence(
             print(f"[mapping] page_cut fallback: {page_cut} sections")
 
     return mapped
+
+
+def _revert_position_clusters(mapped: list, full_text_len: int, total_pages: int) -> int:
+    """
+    Класс-2 фикс: находит прогоны из >= CLUSTER_MIN подряд идущих по ToC секций,
+    чьи НАЙДЕННЫЕ позиции втиснуты в <= CLUSTER_SPAN символов, тогда как их оценки
+    по страницам разнесены на >= CLUSTER_PAGE_SPAN. Это список глав / задник, а не
+    реальные тела — ревертим прогон в not_found, чтобы page_cut расставил по страницам.
+
+    Не трогает page_cut (там позиции и так по странице) и секции без page/без позиции.
+    Возвращает число отвергнутых секций.
+    """
+    # Кандидаты: найденные, с известной страницей, НЕ page_cut.
+    cand = []
+    for idx, m in enumerate(mapped):
+        if m['start_idx'] == -1:
+            continue
+        if m.get('match_strategy') == 'page_cut':
+            continue
+        page = m['item'].get('page')
+        if not isinstance(page, int):
+            continue
+        est = _estimate_position_from_page(page, total_pages, full_text_len)
+        cand.append((idx, m['start_idx'], est))
+
+    reverted = 0
+    n = len(cand)
+    i = 0
+    while i < n:
+        # собираем максимальный прогон ПОДРЯД идущих по ToC индексов
+        j = i
+        while j + 1 < n and cand[j + 1][0] == cand[j][0] + 1:
+            j += 1
+        run = cand[i:j + 1]
+        if len(run) >= CLUSTER_MIN:
+            pos = [r[1] for r in run]
+            ests = [r[2] for r in run]
+            if (max(pos) - min(pos) <= CLUSTER_SPAN
+                    and max(ests) - min(ests) >= CLUSTER_PAGE_SPAN):
+                for ridx, _, _ in run:
+                    m = mapped[ridx]
+                    m['start_idx'] = -1
+                    m['end_idx'] = -1
+                    m['confidence'] = 0.0
+                    m['match_strategy'] = 'reverted_cluster'
+                    reverted += 1
+        i = j + 1
+
+    if reverted:
+        print(f"[mapping] reverted {reverted} clustered sections (title-list/back-matter) -> page_cut")
+    return reverted
 
 
 def _verify_and_correct_order(

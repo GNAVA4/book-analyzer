@@ -1,5 +1,17 @@
 # BUG: Do Good Design — "Об авторе" section contains copyright/legal text
-_Filed: 2026-05-28 session 001 | Status: open_
+_Filed: 2026-05-28 session 001 | Status: FIXED (Option A applied)_
+_Fixed: 2026-05-29 session 004_
+
+## Fix (applied)
+Chosen Option A's spirit, but cleaner: in `mapping_pipeline.py` restore loop, do NOT restore a
+page-distance-reverted match when the section has a known page — defer to page_cut (positional).
+«Об авторе» no longer pulls the copyright-zone text; it gets a page_cut position instead.
+See [[bug_2026-05-28_part-divider-absorbs-chapter-body]] (Fix A) for the shared mechanism.
+NOTE: «Об авторе» page estimate is still imperfect (its ToC page looks early), ratio ~0.16 — minor
+positional issue, but the copyright spam is gone.
+
+---
+_Original analysis:_
 
 ## Symptom
 Section "Об авторе" in Do Good Design XML contains text from a "Books.Ru" copyright/legal page

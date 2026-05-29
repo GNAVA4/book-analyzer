@@ -1,5 +1,25 @@
 # BUG: Part-divider (page_cut) absorbs the body of the chapter sharing its page
-_Filed: 2026-05-28 session 004 | Status: open_
+_Filed: 2026-05-28 session 004 | Status: FIXED_
+_Fixed: 2026-05-29 session 004 (ToC subsections + mapping Fix A/B)_
+
+## Fix (applied + measured, session 004)
+Two independent causes, two fixes — both confirmed via `scripts/mapping_audit.py`:
+- **Release It! (divider eats chapter):** RESOLVED for free by the ToC fix. Richer ToC now has
+  subsections 2.1–2.5 etc. that become intra-chapter cut points, so «Часть I» can't swallow ch.2.
+  Measured: «Часть I» 30611→4090, ch.2 spread across 2.1–2.5 (ratios ~1.0).
+- **Do Good (exact titles cluster in back-matter):** fixed in `mapping_pipeline.py`:
+  - **Fix A** — in the restore loop (`_restored_after_rescue_fail`): do NOT restore a page-distance
+    revert if the section has a known page; defer to page_cut (places by page). Fixes Глава 1/3/5/7
+    and «Об авторе» copyright spam. Restore kept only when no page exists.
+  - **Fix B** — `_revert_position_clusters`: a run of ≥3 consecutive ToC sections whose matched
+    positions are crammed in ≤4000 chars while their page-estimates span ≥15000 = a title-list/index,
+    not bodies → revert to not_found so page_cut spreads them by page. Fixes Глава 8–12 cluster.
+  Measured Do Good after A+B: Глава 6 ×4.56→1.12, Глава 7 1.22, Глава 8–12 0.78–1.13 (were 0.01–0.14).
+- No regressions: B does NOT false-trigger on dense books (parallelnoe 248 / Массель: 0 cluster
+  reverts); A is scope-limited to page-distance reverts by construction. 264 tests pass.
+
+---
+_Original analysis (kept for context):_
 
 ## Symptom
 A section exists in XML with high confidence (0.90) but its `<content>` is a tiny fragment,

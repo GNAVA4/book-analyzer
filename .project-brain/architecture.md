@@ -99,8 +99,16 @@ are invoked SEQUENTIALLY (GPU ≤90%). `_llm_from_text_retry` retries up to 3× 
 - **Non-obvious:**
   - `_verify_and_correct_order` runs TWICE: before rescue (catches in-ToC matches) and after (catches
     out-of-order rescue results). Early verify is critical — without it, in-ToC matches stay at conf=1.0.
-  - `_restored_after_rescue_fail`: if page-distance reverted a match but rescue found nothing better,
-    the original match is restored at conf×0.7. This can restore FALSE POSITIVES (see Do Good Design bug).
+  - `_restored_after_rescue_fail` (session 004 Fix A): if page-distance reverted a match and rescue
+    found nothing better, restore the original ONLY when the section has NO page. If it has a page,
+    defer to page_cut (positional by page) — restoring a far match re-introduces a false positive
+    (Do Good «Об авторе» copyright, Главы 1/3/5/7). 
+  - `_revert_position_clusters` (session 004 Fix B): a run of ≥3 consecutive ToC sections whose matched
+    positions are crammed in ≤`CLUSTER_SPAN`(4000) chars while page-estimates span ≥`CLUSTER_PAGE_SPAN`
+    (15000) = a chapter-list/index/back-matter, not real bodies → revert to not_found so page_cut
+    spreads them by page (Do Good Главы 8–12). Runs after final verify, before page_cut. Does NOT
+    fire on dense legit books (parallelnoe/Массель: 0 reverts) — positions crammed BUT pages spread is
+    the anomaly signal. Excludes page_cut and sections without a page.
   - `PAGE_DISTANCE_TOLERANCE_RATIO=0.30`: if exact match is >30% of text_len from expected page position,
     it's considered suspect. Calibrated for "chapter found in Index/Appendix" case. Do not raise without testing.
   - Fuzzy matching uses `difflib.SequenceMatcher` with `FUZZY_THRESHOLD=0.85`. High threshold is intentional —
@@ -114,7 +122,8 @@ are invoked SEQUENTIALLY (GPU ≤90%). `_llm_from_text_retry` retries up to 3× 
 5. Embedding rescue — semantic search via `embedding_client.locate_section`
 6. LLM rescue — `llm_client.locate_section_in_text` as last resort
 7. Final `_verify_and_correct_order` (out-of-order check on rescue results)
-8. `_restored_after_rescue_fail` — restore page-distance backups if rescue found nothing
+8. `_restored_after_rescue_fail` — restore page-distance backups ONLY if no page (else defer to page_cut)
+9. `_revert_position_clusters` — revert crammed back-matter title clusters → page_cut (Class-2 fix)
 
 ---
 
@@ -333,3 +342,5 @@ _Append only. Never delete entries._
 | 2026-05-29 | 004 | toc_builder: `_looks_incomplete` trigger + smart fallback `_select_best` | Heuristic misses subsections on messy layouts (Розенсон/Клейнман) |
 | 2026-05-29 | 004 | llm_engine: `_parse_toc_items` salvage + TOC_MAX_TOKENS + extra_instruction | LLM ToC JSON truncated/malformed; retry-with-feedback |
 | 2026-05-29 | 004 | clamp LLM ToC level to 1..3 in _normalize_llm_items | level 4 falsely invalidated a perfect ToC |
+| 2026-05-29 | 004 | mapping Fix A: defer far page-distance reverts to page_cut | restore re-introduced false positives (Do Good copyright + ch1/3/5/7) |
+| 2026-05-29 | 004 | mapping Fix B: _revert_position_clusters (Class-2) | exact titles cluster in back-matter; bodies absorbed by neighbour (Do Good ch8-12) |

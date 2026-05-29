@@ -101,9 +101,25 @@ Diagram (toc_validate в ветке toc_builder), новый компонент 
 data flow шаг 5, cross-cutting («never ship unvalidated LLM ToC», «models run sequentially»),
 Change History (5 записей сессии 004).
 
+## Класс 2 — смещение контента (СДЕЛАНО, измерено)
+Метод: `scripts/mapping_audit.py` (build_toc + map_sequence + нарезка, БЕЗ LLM-clean — лёгкое
+измерение смещения). Сначала измерили (по решению пользователя «сначала измерить»).
+- **Release It!**: фикс ToC сам разложил — подразделы 2.1–2.5 стали точками разреза. «Часть I»
+  30611→4090, глава 2 распределена (ratio ~1.0). Mapping не трогали.
+- **Do Good** (ToC только главы, спасать нечем): два механизма + два фикса в mapping_pipeline:
+  - **Fix A** — `_restored_after_rescue_fail`: не восстанавливать дальний page-distance-реверт если
+    есть страница → отдать page_cut. Чинит Главы 1/3/5/7 + copyright в «Об авторе».
+  - **Fix B** — `_revert_position_clusters`: ≥3 подряд секций втиснуты в ≤4000 знаков при разбросе
+    оценок ≥15000 → реверт в page_cut (список глав/задник). Чинит Главы 8–12.
+  Итог Do Good: Глава 6 ×4.56→1.12, Глава 7 →1.22, Главы 8–12 0.78–1.13. Регрессий нет
+  (parallelnoe 248 / Массель: 0 ложных cluster-revert; A ограничен page-distance-ревертами).
+  264 теста. Файлы: mapping_pipeline.py (+CLUSTER_* константы), test_mapping_pipeline.py (+4),
+  scripts/mapping_audit.py (NEW).
+- architecture.md обновлён (mapping non-obvious A/B, cascade levels 8-9, Change History).
+
 ## ДАЛЕЕ
-- **Класс 2 — смещение контента** в mapping_pipeline (bug_2026-05-28_part-divider-absorbs-chapter-body).
-- Опционально: ctx LM Studio → ~24K + TOC_MAX_TOKENS ~6000 (пользователь предложил; нужно только для
-  ToC > ~85 пунктов, salvage и так спасает).
-- Tie-in: прогнать полный пайплайн на Розенсоне с новым ToC → проверить, что богатый ToC уменьшает
-  TRUNCATED/BLOATED в audit_content (это уже начало работы по Классу 2).
+- Прогнать полный пайплайн на всех 11 книгах с правками сессии 004 (ToC + mapping) → обновить
+  baseline test_v2 + corpus-аудит. Нужен LM Studio.
+- Мелочи: «Об авторе» Do Good (кривая страница в ToC, ratio 0.16); parallelnoe приложение D
+  (embedding_rescue в плотном std::-справочнике — пред-существующее, не от Класса 2).
+- Опционально: ctx LM Studio → ~24K + TOC_MAX_TOKENS ~6000 (для ToC > ~85 пунктов).
