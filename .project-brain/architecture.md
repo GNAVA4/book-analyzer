@@ -97,7 +97,7 @@ are invoked SEQUENTIALLY (GPU ≤90%). `_llm_from_text_retry` retries up to 3× 
 ---
 
 ### mapping_pipeline.py
-- **What:** 5-level cascade for mapping sequence→positions in full text. Returns `mapped` list.
+- **What:** 9-stage cascade for mapping sequence→positions in full text. Returns `mapped` list.
 - **Why it exists:** Isolated from neural parser; the rescue logic is complex enough to test separately.
 - **Location:** `app/services/mapping_pipeline.py`
 - **Key files:** same
@@ -120,6 +120,9 @@ are invoked SEQUENTIALLY (GPU ≤90%). `_llm_from_text_retry` retries up to 3× 
     it's considered suspect. Calibrated for "chapter found in Index/Appendix" case. Do not raise without testing.
   - Fuzzy matching uses `difflib.SequenceMatcher` with `FUZZY_THRESHOLD=0.85`. High threshold is intentional —
     lower values cause "система А" to match "система Б" (different chapters with similar names).
+  - **`current_pos` cascade discipline**: `find_real_indices` advances `current_pos` after each
+    match, so a wrong early match pushes later titles past their real bodies → page_cut. The
+    list-context preference in `pdf_utils._search_with_confidence` is what keeps this disciplined.
 
 **Cascade levels:**
 1. `find_real_indices` — regex with 4 strategies: exact, tokenized_regex, partial_words, num_prefix
@@ -195,6 +198,15 @@ are invoked SEQUENTIALLY (GPU ≤90%). `_llm_from_text_retry` retries up to 3× 
     → promoted to confidence=1.0. Added to page-distance whitelist. This catches whitespace-only diffs.
   - `fast_clean_chunk` does NOT remove CJK. `scrub_foreign_script` in pdf_parser_neural.py handles that.
   - `check_document_readability` uses garbage_ratio + char diversity. Threshold tuned empirically.
+  - **List-context preference (session 004 end, commit c81fcf0)**: `_search_with_confidence`
+    prefers the first occurrence whose FOLLOWING text is prose, not a list. Helpers:
+    `_is_list_context` (detects leading bullet `•·…`, leader-dots, or another bullet within
+    ~50 chars after) + `_find_first_nonlist` / `_first_nonlist_match`. Applied to the `exact`
+    and `tokenized` strategies. Fallback: first occurrence if ALL are list-like — no behaviour
+    change for clean books. Fixed Розенсон/Кениг subsection content («•»/dots → prose) AND
+    Клейнман regression (wrong-occurrence cascade pushed current_pos forward → later titles
+    fell to page_cut). **Do NOT revert this preference** — it's the bedrock of subsection
+    mapping quality.
 
 ---
 
@@ -303,6 +315,11 @@ are invoked SEQUENTIALLY (GPU ≤90%). `_llm_from_text_retry` retries up to 3× 
 - **Never ship unvalidated LLM ToC**: any LLM/OCR-derived ToC candidate must pass `toc_validate.is_valid`
   (formal + no CJK + grounding≥0.8) before being preferred over the heuristic. Selection by grounded count.
 - **Models run sequentially**: LLM + OCR + embedder must not be resident simultaneously (GPU ≤90%).
+- **Prefer prose occurrence over list occurrence** (s4 c81fcf0): regex search in `pdf_utils._search_with_confidence`
+  uses `_find_first_nonlist`; the first occurrence in a bulleted/dotted ToC-like context is skipped.
+- **Never silently drop OCR pages on 400** (s5): `ocr_engine` catches `BadRequestError`, recovers
+  embedded text from body, falls back to `page.get_text()`. Every page must produce *something* or an
+  explicit logged failure.
 
 ## Tech stack
 | Layer | Tech | Version | Why chosen |
@@ -329,13 +346,34 @@ are invoked SEQUENTIALLY (GPU ≤90%). `_llm_from_text_retry` retries up to 3× 
 - **Don't disable _looks_like_toc_content check**: Release It! had 21/36 sections "found" inside ToC pages
 - **Don't raise FUZZY_THRESHOLD below 0.85**: causes "система А" to match "система Б" (confirmed in Иглмен experiments)
 - **Don't load all models at once**: GPU reaches 100%, user's display disappears → session 001
+- **Don't take the first occurrence blindly in search** (s4): list-context check exists for a reason. Reverting it
+  breaks Розенсон/Кениг subsection bodies and causes wrong-occurrence cascades that send later titles to page_cut.
+- **Don't trust scripts/mapping_audit.py as production reality** (s5): it bypasses parts of the pipeline.
+  Klein audit script claimed 0 page_cut, real `parse_pdf_neural` gives 36. Use `run_corpus.py` for truth.
+- **Don't combine bash `&` with tool `run_in_background=true`** (s5): spawns TWO Python processes
+  (one venv, one system 3.11) — same family as the historic two-uvicorn landmine. Pick ONE backgrounding mechanism.
+- **Don't revert ToC level clamp to 1..3** in `_normalize_llm_items` (s4): a stray level-4 falsely
+  invalidated a perfect 77-item Розенсон ToC.
 
 ## Known technical debt
-- **Release It! regression**: 7 front-matter sections have conf=0.00 after session 001 changes — root cause unclear
-- **Page-cut fallback not implemented**: sections with large-typography headers (Иглмен, Do Good Design) get conf=0.00; fix is to cut by page-hint instead of title search
-- **_restored_after_rescue_fail can restore false positives**: Do Good Design "Об авторе" gets copyright text
-- **toc_validation metric is noisy**: coverage_pct unreliable when heuristic already found ToC perfectly
-- **No LM Studio context guard**: pipeline doesn't warn if model loaded with ctx < 8192
+- **`_looks_incomplete` over-triggers** (s5): on books where first 20 pages contain body refs to page
+  numbers, raw_entries grossly over-counts. ВКР: ratio 2.36 but heuristic 14 = correct. Causes
+  ~170s wasted on LLM+OCR fallback whose output isn't even chosen. Tune options in OPEN.md.
+- **LLM strips hierarchical numbering** (s5 bug, open): `extract_toc_json` returns «Абстракция» where
+  ToC has «1.2.1 Абстракция». Wrecks mapping for ocr_llm / llm books (digital-design 20/105 real).
+- **Heuristic loses chapter title after number** (s5 bug, open): multi-line ToC entries «N.» / «Title»
+  on separate lines produce titles like «1.», «2.» with empty descriptions (1332, 12_100229).
+- **MIL-STD 5.1.2.5 absorbed +61k chars** (s5, root unclear): exact-→page_cut redistribution after
+  list-context fix; needs `audit_content.py` investigation.
+- **Клейнман: real pipeline gives 36 page_cut, CONTEXT/mapping_audit claimed 0** — measurement
+  discrepancy between debug tool and `parse_pdf_neural`; needs reconciliation.
+- **`_restored_after_rescue_fail` can restore false positives** (s4): Do Good Design "Об авторе"
+  gets copyright text in some configurations. Fix A partially addresses via defer-to-page_cut, but
+  page_cut is only as good as linear pagination.
+- **toc_validation metric is noisy**: coverage_pct unreliable when heuristic already found ToC perfectly.
+- **No LM Studio context guard**: pipeline doesn't warn if model loaded with ctx < 8192.
+- **No content-quality check for «•»/dots/ToC-fragment bodies**: coverage and length-based metrics
+  mask misplacement. Reliable content-quality signal still TODO.
 
 ## Change History
 _Append only. Never delete entries._
@@ -356,5 +394,8 @@ _Append only. Never delete entries._
 | 2026-05-29 | 004 | clamp LLM ToC level to 1..3 in _normalize_llm_items | level 4 falsely invalidated a perfect ToC |
 | 2026-05-29 | 004 | mapping Fix A: defer far page-distance reverts to page_cut | restore re-introduced false positives (Do Good copyright + ch1/3/5/7) |
 | 2026-05-29 | 004 | mapping Fix B: _revert_position_clusters (Class-2) | exact titles cluster in back-matter; bodies absorbed by neighbour (Do Good ch8-12) |
+| 2026-05-29 | 004 | pdf_utils: list-context preference (`_is_list_context` / `_find_first_nonlist`) in `_search_with_confidence` | wrong-occurrence-in-bulleted-summary matched bodies, cascaded current_pos. Fixed Розенсон/Кениг subsections, Клейнман regression |
+| 2026-05-29 | 004 | toc_builder: `_llm_from_text_retry` retries when items << raw entry count | LLM non-deterministic: Клейнман returned 57 some runs, 7 others; short runs let incomplete heuristic win |
 | 2026-05-30 | 005 | toc_builder: `_drop_fuzzy_pageless_dupes` second pass in `_dedup_and_order` | ВКР: OCR drift («ИЗУЧЕНЯЯ»/«ИЗУЧЕНЯЮ») defeats exact-norm dedup; fuzzy ≥ 0.88 catches it |
 | 2026-05-30 | 005 | ocr_engine: `_extract_text_from_ocr_error` + `BadRequestError` branch | glm-ocr 400 «Failed to parse input» bodies contain the OCR'd text; recover instead of silent drop. 0e6e53b: 4 pages, 1757 chars recovered |
+| 2026-05-30 | 005 | .gitignore: exclude `test_v*/`, `tests_v*/`, `.audit_pages/`, `.claude/skills/` | Large baseline XML dirs and local Claude state shouldn't be tracked |
