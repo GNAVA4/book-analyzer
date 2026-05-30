@@ -15,6 +15,7 @@ Builder пробует уровни по очереди, останавлива�
 """
 
 import re
+from difflib import SequenceMatcher
 from typing import Callable, Awaitable
 
 from .toc_parser import HeuristicParser, toc_to_linear_sequence
@@ -242,6 +243,7 @@ def _dedup_and_order(sequence: list) -> list:
             by_norm[title] = s
 
     deduped = [by_norm[t] for t in order]
+    deduped = _drop_fuzzy_pageless_dupes(deduped)
 
     has_pages = sum(1 for s in deduped if isinstance(s.get('page'), int))
     if has_pages / max(len(deduped), 1) > 0.7:
@@ -252,6 +254,58 @@ def _dedup_and_order(sequence: list) -> list:
         ))
 
     return deduped
+
+
+# Порог fuzzy-merge для page-less дубликатов. Кейс ВКР: один и тот же заголовок
+# приходит из ToC c страницей и повторно — из заголовка тела (без страницы),
+# с однобуквенной OCR-разницей («ИЗУЧЕНЯЯ» vs «ИЗУЧЕНЯЮ»). Реальные разные
+# главы на 82 символах титула не достигают 0.88 сходства.
+_PAGELESS_DUP_THRESHOLD = 0.88
+
+
+def _drop_fuzzy_pageless_dupes(items: list) -> list:
+    """Drop page-less entries that fuzzy-match a paged entry's title.
+
+    Targets OCR drift where the same heading appears twice — once in the ToC
+    with a page, once as the chapter heading without a page — and the two OCR
+    passes diverge by 1–2 letters, defeating exact-norm dedup.
+    """
+    if not items:
+        return items
+
+    def _norm(t: str) -> str:
+        return re.sub(r'\s+', ' ', (t or '').lower()).strip()
+
+    paged_norms = [_norm(s.get('title')) for s in items
+                   if isinstance(s.get('page'), int)]
+    paged_norms = [n for n in paged_norms if n]
+    if not paged_norms:
+        return items
+
+    out = []
+    for s in items:
+        if isinstance(s.get('page'), int):
+            out.append(s)
+            continue
+        t = _norm(s.get('title'))
+        if not t:
+            out.append(s)
+            continue
+        dup = False
+        for p in paged_norms:
+            longer = max(len(t), len(p))
+            if longer < 8:
+                continue
+            # Длинное расхождение в длине → точно не один и тот же заголовок;
+            # пропускаем дорогой ratio() ради скорости.
+            if abs(len(t) - len(p)) > longer * 0.25:
+                continue
+            if SequenceMatcher(None, t, p).ratio() >= _PAGELESS_DUP_THRESHOLD:
+                dup = True
+                break
+        if not dup:
+            out.append(s)
+    return out
 
 
 # --- Helpers -----------------------------------------------------------------

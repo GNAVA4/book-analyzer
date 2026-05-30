@@ -1,70 +1,75 @@
 # OPEN ITEMS — Book Analyzer
-_Last updated: 2026-05-29 session 004_
+_Last updated: 2026-05-30 session 005_
 
 ## In progress
 _(nothing active)_
 
 ## Done this session (was in progress)
-- [x] **Class 2: content misplacement** — FIXED. Release It! resolved by ToC subsections; Do Good fixed
-  by mapping Fix A (defer far page-distance reverts to page_cut) + Fix B (`_revert_position_clusters`).
-  Measured ratios ~1.0; no regressions (B 0 false reverts on parallelnoe/Массель); 264 tests pass.
-  See bug_2026-05-28_part-divider-absorbs-chapter-body + insight_2026-05-29_class2-misplacement-mechanism.
-- [x] **Smart LLM/OCR ToC fallback** — DONE & live-verified. Розенсон 20→77 (llm), Клейнман 41→57 (llm),
-  complete books untouched, 260 tests pass. See bug_2026-05-29_toc-subsections-dropped + ADR 003.
-  Optional follow-up: raise LM Studio ctx to ~24K and TOC_MAX_TOKENS to ~6000 (user offered) — only
-  matters for ToCs bigger than ~85 items; salvage parser already handles truncation gracefully.
+- [x] **VKR ToC duplicate fix** (`_drop_fuzzy_pageless_dupes`) — code applied, 12 unit tests
+  pass, live ВКР prod XML no longer has trailing «ГЛАВА 1» dupe. См. bug_2026-05-29_vkr-toc-
+  duplicate-chapter (updated status).
+- [x] **OCR 400 recovery** (`_extract_text_from_ocr_error`) — FIXED live-verified on 0e6e53b
+  (4 pages, 1757 chars recovered). См. bug_2026-05-29_ocr-drops-parseable-pages (FIXED).
+- [x] **Corpus run 19 books** → tests_v4 — new baseline. 12 books v3↔v4 diff analyzed (mostly
+  no-op for my fixes), 7 new books surfaced 2 new defect classes.
 
-## TODO
-- [ ] **Class 2: content misplacement** — `mapping_pipeline.py`. Text not lost but filed under wrong
-  section (divider/neighbour absorbs a chapter's body). Confirmed: Release It! «Часть I» ate ch.2 body;
-  Do Good «Глава 6» ×4.5 while ch.7–14 empty (conf=1.0); Кениг/Массель/parallelnoe same pattern
-  (exact short-title matches landing out-of-order). See bug_2026-05-28_part-divider-absorbs-chapter-body.
-- [ ] **Content quality audit of remaining books** — Do Good / Кениг / parallelnoe content handed to me
-  by user; audit_content flags are class-2 misplacement (not ToC). Massель: 3 EMPTY (conf=1.0).
+## TODO (новые приоритеты — после нового корпуса)
+- [ ] **Дефект А: LLM strips hierarchical numbering** — digital-design (20/105 real, ocr_llm),
+  978-5-7996 (24/32 page_cut, llm). См. `bug_2026-05-30_llm-strips-hierarchical-numbering`.
+  Подходы: фикс prompt + post-process в `_normalize_llm_items` (re-attach prefix из raw text).
+- [ ] **Дефект Б: Heuristic loses chapter name after number** — 1332 (10 пустых «1.», «2.»),
+  12_100229 (6 пустых + дубли split-а). См. `bug_2026-05-30_heuristic-loses-chapter-title-
+  after-number`. Подход: multi-line lookahead в `HeuristicParser`.
+- [ ] **MIL-STD 5.1.2.5 absorbed +61k chars** — Class-2 residual? Замерить через
+  `audit_content.py` на v4, проверить, какая секция реально должна владеть этим текстом.
+- [ ] **Клейнман: live 36 page_cut vs CONTEXT claim 0** — `scripts/mapping_audit.py` показывает
+  одно, реальный пайплайн — другое. Разобраться где правда и обновить.
+- [ ] **OCR digital-design — drift в titles** («прицелы»/«принципы»). Below FUZZY_THRESHOLD=0.85.
+  Опционально: понизить порог fuzzy_rescue для коротких слов, или второй проход с OCR-aware
+  edit-distance.
+
+## TODO (продолжающиеся из сессии 004)
 - [ ] **MIL-STD 154 not-found / 92 EMPTY** — coverage .944 → text present but mis-attributed; likely class 2.
-  Re-measure with new mapping (Fix A/B) before investigating further.
-- [ ] **parallelnoe appendix D** — dense std:: reference entries get mis-located by embedding_rescue
-  (TRUNC/BLOAT in D.x). Pre-existing, NOT caused by Fix A/B. Separate from class 2; low priority.
-- [x] **Re-ran full pipeline → tests_v3** (12 books, incl. new ВКР) with session-004 changes. Audited.
-  Wins: Release It! 31→126, Розенсон ToC 20→77, Do Good content fixed. Regressions/breakage found —
-  see Open bugs above.
-- [ ] **report.json content_len/preview are all 0** (test_v2) — post-hoc artifact (session 003 script
-  edited mid-run). Source of truth for content = the XML, not the report. Regenerate reports if needed.
-- [ ] **Fix PIPELINE_DIFF.md note** — says "LLM clean is sequential", actually asyncio.gather. Docs only.
+- [ ] **parallelnoe appendix D** — dense std:: reference entries get mis-located by embedding_rescue.
+- [ ] **report.json content_len/preview are all 0** (test_v2) — pre-existing, source of truth = XML.
+- [ ] **Fix PIPELINE_DIFF.md note** — says "LLM clean is sequential", actually asyncio.gather.
 
-## Open bugs (found in tests_v3 corpus audit, 2026-05-29)
-- [x] **FIXED** `bug_2026-05-29_subsection-maps-into-toc.md` — list-context match preference
-  (`_find_first_nonlist`/`_is_list_context` in pdf_utils). Розенсон/Кениг bodies recovered (ratio ~1.0).
-  Residual: Кениг «3.Свет»/«4.Текстура» (non-bulleted crammed cluster) + a few divider empties.
-- [x] **FIXED** `bug_2026-05-29_kleinman-pagecut-regression.md` — root was wrong-occurrence cascade
-  (NOT Fix A); same list-context fix resolved it (heuristic-40 now 0 page_cut, cov ~0.98). Plus LLM
-  ToC retry-on-too-few-items added (completeness robustness).
-- [ ] `bug_2026-05-29_vkr-toc-duplicate-chapter.md` — ВКР: ГЛАВА 1 duplicated at end of ToC (empty
-  page) + intro gets ToC fragment.
-- [ ] `bug_2026-05-29_ocr-drops-parseable-pages.md` — glm-ocr 400 drops readable pages (0e6e53b
-  pp.25/120/137/174); needs retry/fallback.
-- [ ] MIL-STD ~92 short clauses exact-matched but empty (dense standard) — characterize/fix.
-- [ ] parallelnoe appendix D — embedding_rescue mis-locates dense std:: reference (pre-existing).
+## Open bugs
+- [ ] `bug_2026-05-30_llm-strips-hierarchical-numbering.md` (HIGH, new) — see Дефект А above.
+- [ ] `bug_2026-05-30_heuristic-loses-chapter-title-after-number.md` (HIGH, new) — see Дефект Б above.
+- [ ] `bug_2026-05-29_vkr-toc-duplicate-chapter.md` — ToC dup PART closed; residual ВВЕДЕНИЕ/
+  ЗАКЛЮЧЕНИЕ getting ToC fragments (mapping side, same class as subsection-into-toc).
+- [ ] `bug_2026-05-29_subsection-maps-into-toc.md` — residual: Кениг «3.Свет»/«4.Текстура».
+- [ ] MIL-STD ~92 short clauses exact-matched but empty.
+- [ ] parallelnoe appendix D — embedding_rescue mis-locates dense std:: reference.
 
-Synthesis: [[insight_2026-05-29_corpus-content-audit-v3]] — ToC extraction is good now; **subsection
-content MAPPING** is the bottleneck. Metric lesson: coverage / "real>100" MASK misplacement — use
-content-quality (junk/ToC-fragment) checks, not length.
+Synthesis: [[insight_2026-05-29_corpus-content-audit-v3]] — ToC extraction good, subsection
+content mapping is the bottleneck for OCR/LLM books.
 
 ## Closed this session
-- [x] `bug_2026-05-28_part-divider-absorbs-chapter-body.md` — content misplacement (class 2). FIXED.
-- [x] `bug_2026-05-28_do-good-design-copyright-spam.md` — "Об авторе" copyright. FIXED (defer to page_cut).
-- [x] `bug_2026-05-29_toc-subsections-dropped.md` — A heuristic + B smart LLM fallback. FIXED.
+- [x] `bug_2026-05-29_ocr-drops-parseable-pages.md` — FIXED 2026-05-30 (recover from 400 body
+  + PyMuPDF text-layer fallback), live-verified on 0e6e53b.
 
-## Closed bugs
-- [x] `bug_2026-05-28_release-it-regression.md` — FIXED session 001.
-- [x] Иглмен 2 not-found (page_cut ordering) — FIXED session 002.
+## Closed bugs (prior sessions)
+- [x] `bug_2026-05-28_release-it-regression.md` — session 001.
+- [x] Иглмен 2 not-found — session 002.
+- [x] `bug_2026-05-28_part-divider-absorbs-chapter-body.md` — session 004.
+- [x] `bug_2026-05-28_do-good-design-copyright-spam.md` — session 004.
+- [x] `bug_2026-05-29_toc-subsections-dropped.md` — session 004 (A heuristic + B smart LLM).
+- [x] `bug_2026-05-29_kleinman-pagecut-regression.md` — session 004 (list-context fix).
 
 ## Open questions / decisions needed
-- [ ] **GROUNDING_MIN=0.8 / incompleteness ratio 1.5** — calibrated offline; confirm on live runs, tune if needed.
+- [ ] **`_looks_incomplete` over-triggers on books with text-layer body refs in first 20 pages**.
+  ВКР: heuristic 14 = верный ToC, но raw_entries 33 → ratio 2.36 > 1.5 → fallback запускает
+  LLM+OCR ~170s впустую. Опции: окно ОТ маркера СОДЕРЖАНИЕ (риск — маркер может быть OCR-битый),
+  или soft-cap ±10 страниц, или второе условие монотонности по pages + доля level≥2.
+- [ ] **GROUNDING_MIN=0.8 / incompleteness ratio 1.5** — calibrated offline; confirm on live runs.
 - [ ] **scrub_foreign_script threshold** — removes ALL CJK/Arabic. Edge case: books with intentional CJK.
+- [ ] **CONTEXT vs реальность по Клейнману** — claim «0 page_cut» против live 36 page_cut.
+  Обновить CONTEXT после расследования.
 
 ## Deferred (not forgotten)
 - [ ] **0e6e53b LLM-clean speed** — 14 low-conf sections, parallel but slow. Acceptable.
-- [ ] **toc_validation (OCR coverage) metric** — noisy when heuristic ToC is perfect. Informational only.
+- [ ] **toc_validation (OCR coverage) metric** — noisy when heuristic ToC is perfect. Informational.
 - [ ] **Context length guard** — no early warning if LM Studio ctx < 8192. Manual workaround.
 - [ ] **Do Good Design copyright spam** — low priority. Options in bug file.

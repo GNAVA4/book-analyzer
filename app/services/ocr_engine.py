@@ -12,8 +12,9 @@ OCR fallback через локальную vision-модель (glm-ocr в LM St
 import asyncio
 import base64
 import io
+import re
 import sys
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, BadRequestError
 
 
 def _safe_print(*args, **kwargs):
@@ -42,6 +43,38 @@ OCR_PAGE_PROMPT = (
     "Output only the raw text in reading order, preserving paragraph breaks. "
     "Do NOT add commentary, headers, or descriptions of the image."
 )
+
+
+# glm-ocr иногда отвечает 400 «Failed to parse input at pos N: <текст>» —
+# причина в response-parsing на стороне сервера/клиента, но фактический OCR-
+# текст уже встроен в тело ошибки. Извлекаем его и используем как нормальный
+# вывод вместо потери страницы (см. bug_2026-05-29_ocr-drops-parseable-pages).
+_OCR_400_TEXT_PAT = re.compile(
+    r"Failed to parse input at pos \d+:\s*\n?(.+)",
+    re.DOTALL,
+)
+
+
+def _extract_text_from_ocr_error(exc) -> str:
+    """Pull the OCR'd page text out of a glm-ocr 400 'Failed to parse input' error.
+
+    The error body looks like ``{'error': 'Failed to parse input at pos 0:\\n<text>'}``;
+    the text after the colon is the actual OCR output. Returns '' if the pattern
+    isn't present (i.e. it's a different kind of 400).
+    """
+    body = getattr(exc, 'body', None)
+    err_str = ""
+    if isinstance(body, dict):
+        err_str = str(body.get('error') or body.get('message') or "")
+    if not err_str:
+        err_str = str(exc)
+    m = _OCR_400_TEXT_PAT.search(err_str)
+    if not m:
+        return ""
+    text = m.group(1).strip()
+    # Срезаем хвостовой JSON-мусор, если ловили str(e) ("...'}").
+    text = re.sub(r"['\"]\s*\}\s*$", "", text).strip()
+    return text
 
 
 class OCREngine:
@@ -128,6 +161,18 @@ class OCREngine:
             except asyncio.TimeoutError:
                 _safe_print(f"OCR page {i+1} timed out after {OCR_PAGE_TIMEOUT_SEC}s")
                 text = ""
+            except BadRequestError as e:
+                # glm-ocr 400 «Failed to parse input» — текст уже OCR'нут и
+                # лежит в теле ошибки; забираем его. Иначе — fallback на
+                # текстовый слой PDF, если есть.
+                text = _extract_text_from_ocr_error(e)
+                if text:
+                    _safe_print(f"OCR page {i+1}: recovered {len(text)} chars from 400")
+                elif existing_text:
+                    text = existing_text
+                    _safe_print(f"OCR page {i+1} 400, fell back to PDF text ({len(text)} chars)")
+                else:
+                    _safe_print(f"OCR page {i+1} failed (400, no recovery): {e}")
             except Exception as e:
                 _safe_print(f"OCR page {i+1} failed: {e}")
                 text = ""

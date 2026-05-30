@@ -1,5 +1,30 @@
 # BUG: ВКР — NavigationTable duplicates "ГЛАВА 1" at the end (empty page) + intro gets ToC fragment
-_Filed: 2026-05-29 session 004 | Status: open_
+_Filed: 2026-05-29 session 004 | Status: code change applied, AWAITING live verification + corpus regression_
+_Code applied: 2026-05-30 session 005 — needs live re-run before marking FIXED_
+
+## Code change (applied — unit-tested only)
+Root: the two "ГЛАВА 1" entries differ by ONE OCR letter («ИЗУЧЕН**ЯЯ**» on the ToC page vs.
+«ИЗУЧЕН**ЯЮ**» from the chapter heading) — exact-norm dedup in `_dedup_and_order` missed them.
+Added `_drop_fuzzy_pageless_dupes` (SequenceMatcher ratio ≥ 0.88) as a second pass: any page-less
+entry that fuzzy-matches an earlier paged entry is dropped. Guard: skip when title length < 8 chars
+(avoids "Введ" colliding with "Введение").
+
+281 unit tests pass (+6 new dedup, +6 new ocr) — but **no live pipeline run yet** on ВКР or the rest
+of the corpus. Until that's done, do not claim FIXED.
+
+Files: `app/services/toc_builder.py` (`_drop_fuzzy_pageless_dupes`, called from `_dedup_and_order`).
+Tests: `tests/test_toc_builder.py::TestDropFuzzyPagelessDupes` (6 cases).
+
+## Verification still needed
+- Live re-run ВКР: confirm trailing "ГЛАВА 1" with empty page is gone, ratio stays high.
+- Re-run the rest of tests_v3 corpus and diff against the previous XMLs — any book where a real
+  page-less entry was legitimately distinct from a paged one is at risk if the 0.88 threshold is wrong.
+- Particularly watch: books with subsection structures where heuristic emits page-less entries
+  (e.g. Розенсон, Клейнман — anything where smart LLM fallback fired).
+
+## Residual (separate — content mapping, not ToC)
+ВВЕДЕНИЕ/ЗАКЛЮЧЕНИЕ get ToC fragments — same class as the still-residual `subsection-maps-into-toc`
+case (Кениг 3.Свет/4.Текстура): titles that only match inside the ToC region. Tracked by that bug.
 
 ## Symptom
 ВКР (`ВКР_БАК_Лаванг_РА_УСБО-02-21.pdf`, toc_source=ocr_heuristic) — the ToC parses fine from page 1,

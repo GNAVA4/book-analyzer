@@ -24,7 +24,11 @@ test/
 
 # Сгенерированные XML результаты прогонов
 xml/
+test_v*/
+tests_v*/
+.audit_pages/
 
 # Локальные настройки Claude Code
 .claude/settings.json
 .claude/settings.local.json
+.claude/skills/

@@ -2,6 +2,7 @@
 
 from app.services.toc_builder import (
     _split_sticky_toc_lines, _count_toc_entry_lines, _looks_incomplete,
+    _dedup_and_order, _drop_fuzzy_pageless_dupes,
 )
 
 
@@ -95,3 +96,69 @@ class TestLooksIncomplete:
 
     def test_empty_seq_is_incomplete(self):
         assert _looks_incomplete([], "Глава 1 .... 5") is True
+
+
+class TestDropFuzzyPagelessDupes:
+    """ВКР-кейс: одна и та же глава приходит дважды — раз из ToC с страницей,
+    раз из заголовка тела без страницы, с однобуквенной OCR-разницей."""
+
+    def test_drops_pageless_near_duplicate(self):
+        items = [
+            {"title": "ГЛАВА 1 ТЕОРЕТИЧЕСКИЕ ОСНОВЫ ИЗУЧЕНЯЯ ПЛАТНЫХ УСЛУГ",
+             "page": 5, "level": 1},
+            {"title": "ЗАКЛЮЧЕНИЕ", "page": 82, "level": 1},
+            {"title": "ГЛАВА 1 ТЕОРЕТИЧЕСКИЕ ОСНОВЫ ИЗУЧЕНЯЮ ПЛАТНЫХ УСЛУГ",
+             "page": None, "level": 1},
+        ]
+        out = _drop_fuzzy_pageless_dupes(items)
+        titles = [s["title"] for s in out]
+        assert any("ИЗУЧЕНЯЯ" in t for t in titles)
+        assert not any("ИЗУЧЕНЯЮ" in t for t in titles)
+        assert len(out) == 2
+
+    def test_keeps_unique_pageless_entries(self):
+        items = [
+            {"title": "Глава 1 Введение", "page": 5, "level": 1},
+            {"title": "Об авторе", "page": None, "level": 1},
+        ]
+        out = _drop_fuzzy_pageless_dupes(items)
+        assert len(out) == 2
+
+    def test_keeps_distinct_short_titles(self):
+        """Короткие заголовки с малой длиной — высокий риск ложного срабатывания.
+        Гард `longer < 8` пропускает их."""
+        items = [
+            {"title": "Введение", "page": 5, "level": 1},
+            {"title": "Введ", "page": None, "level": 1},
+        ]
+        out = _drop_fuzzy_pageless_dupes(items)
+        assert len(out) == 2
+
+    def test_keeps_genuinely_different_titles(self):
+        items = [
+            {"title": "Глава 1 Теоретические основы статистики", "page": 5, "level": 1},
+            {"title": "Глава 2 Эмпирический анализ данных", "page": None, "level": 1},
+        ]
+        out = _drop_fuzzy_pageless_dupes(items)
+        assert len(out) == 2
+
+    def test_pageless_only_unchanged(self):
+        items = [
+            {"title": "Глава 1", "page": None, "level": 1},
+            {"title": "Глава 2", "page": None, "level": 1},
+        ]
+        assert _drop_fuzzy_pageless_dupes(items) == items
+
+    def test_dedup_and_order_drops_vkr_trailing_dupe(self):
+        """E2E через _dedup_and_order — реальный ВКР-кейс."""
+        items = [
+            {"title": "ВВЕДЕНИЕ", "page": 2, "level": 1},
+            {"title": "ГЛАВА 1 ТЕОРЕТИЧЕСКИЕ ОСНОВЫ СТАТИСТИЧЕСКОГО ИЗУЧЕНЯЯ ОБЪЕМА ПЛАТНЫХ УСЛУГ НАСЕЛЕНИЮ",
+             "page": 5, "level": 1},
+            {"title": "ЗАКЛЮЧЕНИЕ", "page": 82, "level": 1},
+            {"title": "ГЛАВА 1 ТЕОРЕТИЧЕСКИЕ ОСНОВЫ СТАТИСТИЧЕСКОГО ИЗУЧЕНЯЮ ОБЪЕМА ПЛАТНЫХ УСЛУГ НАСЕЛЕНИЮ",
+             "page": None, "level": 1},
+        ]
+        out = _dedup_and_order(items)
+        assert len(out) == 3
+        assert out[-1]["title"] == "ЗАКЛЮЧЕНИЕ"

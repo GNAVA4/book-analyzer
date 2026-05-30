@@ -1,5 +1,5 @@
 # PROJECT CONTEXT — Book Analyzer
-_Last updated: 2026-05-29 session 004_
+_Last updated: 2026-05-30 session 005_
 
 ## What this project is
 PDF/DOCX/TXT book parser: extracts Table of Contents and section content into structured XML files.
@@ -11,52 +11,47 @@ Models: `qwen2.5-7b-instruct` (LLM, ctx=8192), `glm-ocr` (vision OCR), `text-emb
 Frontend: single-page `static/index.html` (vanilla JS + dark theme)
 Server runs via venv: `c:\book analyzer\venv\Scripts\python.exe -m uvicorn app.main:app`
 
-## Current state — full run results (session 003, all 11 books → test_v2/)
+## Current state — session 005 corpus (tests_v4/, 19 books)
 
-| Книга | Секций | Real | avg_conf | ToC source | OCR |
-|-------|--------|------|----------|------------|-----|
-| 0e6e53b (OCR) | 35 | **35** | 0.853 | ocr_llm | ✅ |
-| Виды интерфейсов | 15 | **15** | 1.000 | heuristic | — |
-| Клейнман | 40 | **40** | 1.000 | heuristic | — |
-| Иглмен | 22 | **22** | 0.694 | llm | — |
-| Кениг | 20 | 19 | 0.935 | llm | — |
-| Do Good Design | 18 | 16 | 0.726 | heuristic | — |
-| Release It! | 34 | 31 | 0.716 | heuristic | — |
-| Розенсон | 20 | 16 | 0.833 | heuristic | — |
-| Массель | 23 | 20 | 0.996 | heuristic | — |
-| parallelnoe | 248 | 244 | 0.751 | heuristic | — |
-| MIL-STD-1472G (EN) | 747 | 593 | 0.986 | heuristic | — |
+| Книга | Real/Total | toc | Note |
+|---|---|---|---|
+| 0e6e53b | 35/35 | ocr_llm | **OCR 400 fix: 4 pages recovered (+1757 chars)** |
+| Release It! | 126/129 | heuristic | OK |
+| Виды UI | 15/15 | heuristic | OK |
+| Do Good | 18/18 | heuristic | OK |
+| Иглмен | 22/22 | llm | OK |
+| Массель | 20/23 | heuristic | OK |
+| Розенсон | 74/77 | llm | +5 real vs v3 (list-context фикс с сессии 004) |
+| Кениг | 19/20 | llm | residual Кениг «3.Свет»/«4.Текстура» |
+| parallelnoe | 243/248 | heuristic | OK |
+| Клейнман | 40/40 | heuristic | **РЕАЛЬНО 36 page_cut, avg_conf 0.368** — отличается от заявленного в CONTEXT сессии 004 (там «0 page_cut»). Нужна проверка/обновление |
+| MIL-STD | 594/747 | heuristic | **REGRESSION: 8 секций exact→page_cut**, 5.1.2.5 поглотила +61k chars |
+| **ВКР** | 12/14 | heuristic | **ToC dup FIXED**: 15→14; toc_source flipped ocr_heuristic→heuristic |
+| **bookфизика** *(new)* | 474/475 | heuristic | excellent |
+| **Машинное обучение** *(new)* | 227/228 | heuristic | excellent |
+| **AI** *(new)* | 184/184 | heuristic | OK (73 page_cut but >5k chars each — linear pagination works) |
+| **978-5-7996** *(new)* | 32/32 | llm | **Дефект А: LLM strips numbering, 24 page_cut** |
+| **1332** *(new)* | 51/61 | heuristic | **Дефект Б: 10 titles = только «1. », «2. »…** |
+| **12_100229** *(new)* | 301/328 | heuristic | **Дефект Б + дубли split-а в §-нотации** |
+| **digital-design** *(new)* | 20/105 | ocr_llm | **Дефект А + OCR drift в titles** — каша |
 
-Results saved to `test_v2/` — each book has `.xml` + `_report.json` (stats + per-section breakdown).
-Content quality NOT yet audited — next session task.
+## Active work (session 005 — DONE)
+- ✅ `_drop_fuzzy_pageless_dupes` в `toc_builder._dedup_and_order` — fuzzy ≥ 0.88 на title-norm,
+  гард len<8. Unit-tested. Live-обходит OCR drift «ИЗУЧЕНЯЯ»/«ИЗУЧЕНЯЮ».
+- ✅ `_extract_text_from_ocr_error` + `BadRequestError` ветка в `ocr_engine` — извлечение
+  встроенного OCR-текста из тела 400, fallback на `page.get_text()`. Live-verified: 4 страницы
+  0e6e53b восстановлены (+1757 chars).
+- ✅ Корпусный прогон 19 книг → tests_v4. Корпусный диф v3↔v4: мои фиксы не дали регрессий
+  (на 11 из 12 v3-книг total_sections идентичен; mil-std регрессия — от пред-сессионного коммита).
+- ✅ 2 новых класса дефектов задокументированы (Дефекты А и Б — см. ниже).
 
-## Active work (session 004)
-Content-quality audit DONE → 3 defect classes. ToC (class 1) FIXED. NEXT: class 2 content misplacement.
-- **Mechanism A (ToC dual-ToC) FIXED** in toc_parser.py: Release It! ToC 34→153.
-- **Smart LLM/OCR ToC fallback DONE & live-verified** (ADR 003): incomplete heuristic (algorithmic
-  trigger, no models) → LLM extract w/ retry → validate (CJK+formal+grounding≥0.8) → pick best valid.
-  Розенсон 20→77 (llm), Клейнман 41→57 (llm); complete books untouched (no model calls); 260 tests pass.
-- **Class 2 content misplacement** (mapping_pipeline): Fix A (defer far page-distance reverts to
-  page_cut) + Fix B (`_revert_position_clusters`). Fixed Do Good; Release It! resolved by ToC subsections.
-- **tests_v3 full re-run (12 books) + audit DONE.** Wins: Release It! 31→126 real, Розенсон ToC 20→77,
-  Do Good content correct. BUT audit (corrected by user's manual check) found new breakage:
-  - **Subsection MAPPING is now the bottleneck** — Розенсон/Кениг subsections match in ToC region →
-    content = dots/"•"/fragments (bug_2026-05-29_subsection-maps-into-toc, HIGH).
-  - **Клейнман REGRESSION** — Fix A page_cut on unreliable page-est, cov 0.98→0.10.
-  - ВКР ToC dup ГЛАВА 1; 0e6e53b OCR drops readable pages. See OPEN.md + insight_2026-05-29_corpus-content-audit-v3.
-- **FIXED post-audit**: subsection-into-ToC (Розенсон/Кениг — list-context match preference) + Клейнман
-  (same fix; was a current_pos cascade, not Fix A) + LLM ToC retry-on-too-few. 269 tests; no regressions.
-- **NEXT:** ВКР ToC dup (ГЛАВА 1 at end), MIL-STD 92 empty short clauses, OCR retry (0e6e53b);
-  Кениг residual «3.Свет»/«4.Текстура»; re-run tests_v3 to confirm corpus-wide gains.
-
-## Audit tooling (session 004, scripts/)
-- `audit_content.py` — per-section ratio = XML content_len / PDF page-range text len (offset-anchored).
-  Flags EMPTY/TRUNCATED/BLOATED/LEAK/DUP. NOTE: coverage stays high even with bad misplacement —
-  trust per-section RATIO, not coverage. fitz-vs-fitz is blind to scans (use vision for those).
-- `fitz_blindness.py` — per-page map of low-text+graphics pages (SCAN/SPARSE). Most flagged pages
-  are legit full-page illustrations, NOT lost text (verified by vision).
-- `render_pages.py` — render PDF pages → .audit_pages/*.png for vision ground-truth.
-- `toc_regression_check.py` — heuristic ToC item count vs old NavigationTable (offline regression).
+## NEXT
+- Дефект А (LLM strips hierarchical numbering) — поправить `extract_toc_json` prompt и/или
+  пост-процессинг в `_normalize_llm_items` (re-attach prefix из raw text).
+- Дефект Б (heuristic loses chapter name) — multi-line lookahead в `HeuristicParser`.
+- MIL-STD 5.1.2.5 +61k bloat — расследовать (Class-2 residual?).
+- Клейнман live 36 page_cut vs CONTEXT claim 0 — выяснить и обновить.
+- `_looks_incomplete` over-triggers на ВКР (раздувает run-time на ~170s впустую).
 
 ## Decisions that affect ALL code
 - **CONFIDENCE_THRESHOLD=0.85**: above → `fast_clean_chunk` (algo), below → LLM boundary+clean
@@ -69,11 +64,13 @@ Content-quality audit DONE → 3 defect classes. ToC (class 1) FIXED. NEXT: clas
 - **page_cut excluded from running_max**: approximate positions must not anchor ordering logic.
 - **page_cut runs AFTER final verify**: must be LAST step in map_sequence. See insight.
 - **ToC heuristic: don't break on page-less «Часть/Part/Раздел»** (Mechanism A): in dual-ToC books
-  (краткое+детальное) the divider recurs inside the detailed ToC; breaking there drops all later subsections.
+  the divider recurs inside the detailed ToC; breaking there drops all later subsections.
 - **ToC heuristic length-guard = 250**: lines >250 chars skip item_pattern regex (catastrophic
   backtracking hung Клейнман when parser read into body). Real ToC items are <250.
 - **ToC incompleteness trigger is algorithmic (no models)**: raw ToC entry-lines / heuristic items
   > 1.5 ⇒ incomplete ⇒ run smart LLM/OCR fallback. Books below threshold are NOT touched.
+  **CAVEAT (session 005):** Over-triggers when first 20 pages contain body refs to page nums
+  (ВКР: ratio 2.36, heuristic gives correct 14 items, fallback wastes ~170s).
 - **Smart ToC fallback validates against hallucination**: CJK + formal + embedding grounding≥0.8;
   never ship unvalidated LLM ToC. See ADR 003.
 - **Content slicing is text-order based**: section content = full_text[end_idx : nearest start_idx in
@@ -83,47 +80,62 @@ Content-quality audit DONE → 3 defect classes. ToC (class 1) FIXED. NEXT: clas
 - **Match the PROSE occurrence, not the list one** (`_find_first_nonlist`/`_is_list_context` in
   pdf_utils): titles often appear first in an in-body bulleted summary / leader-dot ToC; matching there
   gives "•"/dots content AND cascades `current_pos` forward (later titles → page_cut). Prefer the
-  occurrence followed by prose. This fixed Розенсон/Кениг subsections AND Клейнман (the latter was a
-  current_pos cascade, NOT a Fix A regression as first thought).
+  occurrence followed by prose.
 - **LLM ToC is non-deterministic** — can return far fewer items than it should; `_llm_from_text_retry`
   retries when items << raw ToC entry count.
 - **Audit metric trap**: `coverage` and "real sections >100 chars" MASK misplacement — they count
-  dots/"•"/ToC fragments as content and stay high when text is merely misplaced (Розенсон cov 0.986
-  while broken). Judge content QUALITY (does body match its title / is it junk), not length/coverage.
+  dots/"•"/ToC fragments as content and stay high when text is merely misplaced. Judge content QUALITY
+  (does body match its title / is it junk), not length/coverage.
 - **page_cut quality depends on linear pagination**: page_cut is only as good as
   `(page-1)/total_pages × text_len`. For books with uneven text/figure density (Клейнман) the estimate
-  is far off → page_cut misplaces. Trust text matches over page_cut when pagination is non-linear.
+  is far off. Trust text matches over page_cut when pagination is non-linear.
+- **NEW (session 005): fuzzy-pageless dedup**: `_drop_fuzzy_pageless_dupes` removes page-less ToC items
+  that fuzzy-match (SequenceMatcher ratio ≥ 0.88) a paged item. Guard: len < 8 → skip. Targets OCR drift
+  variants («ИЗУЧЕНЯЯ»/«ИЗУЧЕНЯЮ» = 1 letter difference on 80-char title).
+- **NEW (session 005): OCR 400 recovery**: glm-ocr `Failed to parse input at pos N` errors embed the
+  page text in the body; extract via regex on `body['error']`/`str(e)`; fallback on `page.get_text()`.
+  Never silently drop pages.
 
 ## Known landmines ⚠️
 - **GPU max 90%**: at 100% user's display disappears — never load all models simultaneously
 - **cp1251 console**: `print()` with U+FFFD crashes on Windows — always use `_safe_print()`
 - **LM Studio context**: must pre-load with `-c 8192`
 - **_restored_after_rescue_fail**: can restore false positive exact-matches (Do Good Design)
-- **Two uvicorn servers RECURRING ISSUE**: after any restart, old Python 3.11 instance may linger on port 8000 and silently serve stale code. ALWAYS verify with `Get-CimInstance Win32_Process -Filter "Name='python.exe'"` before testing. Kill by PID explicitly.
+- **Two python instances RECURRING ISSUE**: after `&`-backgrounding in bash combined with
+  `run_in_background=true` tool param, TWO Python processes spawn (one venv, one system 3.11).
+  Don't combine both backgrounding mechanisms — pick one. Verify with `Get-CimInstance
+  Win32_Process -Filter "Name='python.exe'"` before testing a fix.
 - **Scripts run with venv Python**: system Python 3.14 doesn't have project deps. Always use `venv/Scripts/python.exe`
-- **Background bash task uses snapshot of script**: if run_pipeline.py is edited while a bash background task is already running it, the running process uses the old version (Python reads the file once at startup)
+- **Background bash task uses snapshot of script**: if `run_pipeline.py` is edited while a bash background task is already running it, the running process uses the old version (Python reads the file once at startup)
 - **dedup key = title only**: acceptable tradeoff, see insight
 - **toc_validation coverage=0.05 is noisy**: Клейнман case — treat as informational only
+- **NEW (session 005): LLM extract_toc_json drops numerical prefixes**: «1.2.1 Абстракция» →
+  «Абстракция». Makes titles ambiguous. Hits books that escalate to llm/ocr_llm source.
+- **NEW (session 005): tests_v3 was generated MID-session-004**, before commits `c81fcf0` and
+  `dddc2ff`. So v3↔v4 diffs include those commits' effects (e.g. MIL-STD 8× exact→page_cut, Розенсон
+  +5 real). v3 is NOT a clean baseline for evaluating session 005 fixes in isolation.
 
 ## File map (key files)
 - `app/api.py` — HTTP POST /upload + WebSocket /ws/analyze
 - `app/services/pdf_parser_neural.py` — main coordinator, thin
-- `app/services/toc_builder.py` — 6-level ToC cascade
+- `app/services/toc_builder.py` — 6-level ToC cascade + smart fallback + **fuzzy-pageless dedup (s5)**
 - `app/services/mapping_pipeline.py` — 5-level mapping + 2× verify + page_cut last
 - `app/services/toc_parser.py` — HeuristicParser
 - `app/services/toc_validator.py` — OCR validation of ToC
-- `app/services/pdf_utils.py` — find_real_indices, fast_clean_chunk, readability check
-- `app/services/llm_engine.py` — LLM client + scrub_foreign_script
-- `app/services/ocr_engine.py` — glm-ocr client with _safe_print
+- `app/services/pdf_utils.py` — find_real_indices, fast_clean_chunk, readability check, list-context preference
+- `app/services/llm_engine.py` — LLM client + scrub_foreign_script + ToC JSON salvage
+- `app/services/ocr_engine.py` — glm-ocr client with `_safe_print` + **400 recovery (s5)**
 - `app/services/embedding_engine.py` — embedding client
 - `app/services/xml_builder.py` — XML output builder
-- `app/services/toc_validate.py` — NEW: ToC candidate validation/scoring (CJK, formal, grounding)
-- `scripts/run_pipeline.py` — E2E test runner; OUT_DIR env var; saves .xml + _report.json
-- `scripts/analyze_xml.py` — standalone XML quality checker (CJK, ToC-like content, short sections)
-- `scripts/audit_content.py` — XML↔PDF per-section ratio audit (EMPTY/TRUNCATED/BLOATED/LEAK/DUP)
-- `scripts/fitz_blindness.py` — per-page fitz-blindness map (SCAN/SPARSE)
-- `scripts/render_pages.py` — render PDF pages → .audit_pages/*.png (vision ground-truth)
+- `app/services/toc_validate.py` — ToC candidate validation/scoring (CJK, formal, grounding)
+- `scripts/run_corpus.py` — direct E2E runner (bypasses uvicorn landmine); OUT_DIR env
+- `scripts/run_pipeline.py` — uvicorn-based E2E test runner
+- `scripts/analyze_xml.py` — standalone XML quality checker
+- `scripts/audit_content.py` — XML↔PDF per-section ratio audit
+- `scripts/fitz_blindness.py` — per-page fitz-blindness map
+- `scripts/render_pages.py` — render PDF pages → .audit_pages/*.png
 - `scripts/toc_regression_check.py` — heuristic ToC count vs old nav (offline regression)
-- `test_v2/` — baseline run: 11 books × (xml + _report.json)
+- `tests_v3/` — baseline 12 books (pre-list-context-fix end of session 004)
+- `tests_v4/` — NEW baseline 19 books (post-session-005 fixes)
 - `static/index.html` — frontend
-- `tests/` — pytest suite 200+ tests
+- `tests/` — pytest suite 281+ tests

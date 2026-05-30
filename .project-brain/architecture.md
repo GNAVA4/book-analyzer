@@ -1,5 +1,5 @@
 # Architecture — Book Analyzer
-_Last updated: 2026-05-29 (session 004)_
+_Last updated: 2026-05-30 (session 005)_
 
 ## What this system does
 Parses PDF/DOCX/TXT books into structured XML: extracts Table of Contents and slices each section's
@@ -67,10 +67,17 @@ for both ToC extraction and section mapping — handles damaged, scanned, and co
 - **Non-obvious:**
   - `_dedup_and_order` must run on ALL return paths, not just at the end. It uses title-only key
     (not title+page) — this is intentional (see ADR + insight). Do not revert to title+page key.
+  - `_drop_fuzzy_pageless_dupes` (session 005) runs as a second pass inside `_dedup_and_order`:
+    SequenceMatcher ≥ 0.88 on normalized titles; drops a page-less entry that fuzzy-matches an
+    earlier paged entry. Guard: skip when title length < 8 chars. Targets OCR drift variants of
+    the same heading (ВКР: «ИЗУЧЕНЯЯ»/«ИЗУЧЕНЯЮ» — 1 letter diff, defeated exact-norm dedup).
   - `_split_sticky_toc_lines` is applied to BOTH OCR text AND PyMuPDF raw_text. OCR glues
     multiple ToC lines into one; PyMuPDF sometimes does too on certain PDF layouts.
   - `TOC_GOOD_ENOUGH=12` — pipeline stops early only if ≥12 sections found with sub-sections.
     Raised from 8 to avoid stopping on upper-level-only ToC (like Иглмен with just 6 ЧАСТИ).
+  - `_looks_incomplete` over-triggers on books with text-layer body refs in the first 20 pages
+    (ВКР: ratio 2.36 yet heuristic 14 = correct ToC). Trigger is conservative-for-recall by
+    design but wastes ~170s on these books. See OPEN.md "Open questions" for tuning options.
 
 **Cascade levels:**
 1. HeuristicParser on PyMuPDF raw_text (fast, first 20 pages)
@@ -226,6 +233,11 @@ are invoked SEQUENTIALLY (GPU ≤90%). `_llm_from_text_retry` retries up to 3× 
   - `OCR_PAGE_TIMEOUT_SEC = 60`: per-page timeout. glm-ocr can hang on complex pages.
   - Empty page skip: pages with 0 chars AND 0 images are skipped entirely (not 0 chars alone —
     some image-only pages have 0 extracted chars but do have images → must OCR those).
+  - **400 «Failed to parse input» recovery (session 005)**: glm-ocr sometimes returns HTTP 400
+    on pages whose OCR'd text is otherwise fine — the text is EMBEDDED in the error body
+    (`body['error']` or `str(exc)`). `_extract_text_from_ocr_error` pulls it out via regex
+    `Failed to parse input at pos N:\\n<text>`. Fallback: `page.get_text()` PyMuPDF text-layer.
+    Never silently drop pages. Verified on 0e6e53b — recovered 4 pages (25/120/137/174, 1757 chars).
 
 ---
 
@@ -344,3 +356,5 @@ _Append only. Never delete entries._
 | 2026-05-29 | 004 | clamp LLM ToC level to 1..3 in _normalize_llm_items | level 4 falsely invalidated a perfect ToC |
 | 2026-05-29 | 004 | mapping Fix A: defer far page-distance reverts to page_cut | restore re-introduced false positives (Do Good copyright + ch1/3/5/7) |
 | 2026-05-29 | 004 | mapping Fix B: _revert_position_clusters (Class-2) | exact titles cluster in back-matter; bodies absorbed by neighbour (Do Good ch8-12) |
+| 2026-05-30 | 005 | toc_builder: `_drop_fuzzy_pageless_dupes` second pass in `_dedup_and_order` | ВКР: OCR drift («ИЗУЧЕНЯЯ»/«ИЗУЧЕНЯЮ») defeats exact-norm dedup; fuzzy ≥ 0.88 catches it |
+| 2026-05-30 | 005 | ocr_engine: `_extract_text_from_ocr_error` + `BadRequestError` branch | glm-ocr 400 «Failed to parse input» bodies contain the OCR'd text; recover instead of silent drop. 0e6e53b: 4 pages, 1757 chars recovered |

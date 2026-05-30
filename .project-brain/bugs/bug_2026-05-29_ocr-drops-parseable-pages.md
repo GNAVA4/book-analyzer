@@ -1,5 +1,26 @@
 # BUG: OCR handling drops parseable pages on glm-ocr 400 ("Failed to parse input")
-_Filed: 2026-05-29 session 004 | Status: open_
+_Filed: 2026-05-29 session 004 | Status: code change applied, AWAITING live verification_
+_Code applied: 2026-05-30 session 005 — needs live re-run before marking FIXED_
+
+## Code change (applied — unit-tested only)
+The 400 error body itself contains the OCR'd text (`{'error': 'Failed to parse input at pos N:
+\n<page_text>'}`) — the failure is in response parsing, not in OCR. Now in `ocr_document` we
+catch `BadRequestError` separately and:
+1. Extract the embedded text via `_extract_text_from_ocr_error` (regex on body['error'] / str(e)).
+2. If extraction fails AND PyMuPDF has any text layer for the page, fall back to it.
+3. Otherwise log and continue with empty text (old behaviour).
+
+Files: `app/services/ocr_engine.py` (+`_extract_text_from_ocr_error`, BadRequestError branch).
+Tests: `tests/test_ocr_engine.py::TestExtractTextFromOcrError` (6 cases). 281 unit tests pass.
+
+## Verification still needed (do NOT mark FIXED until done)
+- Re-run 0e6e53b through OCR. Old behaviour: pp.25/120/137/174 silently lost.
+  Expected: should log "OCR page N: recovered N chars from 400" and content appears in the XML.
+- Confirm no regression on books that DON'T hit the 400 path (most of the corpus) — they should
+  process identically to before.
+- The body['error'] format assumption is empirical (one observed example). If the real error shape
+  differs slightly (different quoting, different key name), recovery returns empty and we silently
+  fall through — verify on the actual error to make sure the regex matches.
 
 ## Symptom
 During the tests_v3 run, 0e6e53b lost content from pages 25, 120, 137, 174 — glm-ocr returned
