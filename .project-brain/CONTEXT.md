@@ -39,14 +39,22 @@ Server runs via venv: `c:\book analyzer\venv\Scripts\python.exe -m uvicorn app.m
 - ✅ **Defect A (LLM strips hierarchical numbering) — FIXED at ToC level.** Prompt update +
   `_reattach_numerical_prefixes` страховочная сетка. Сканирует raw text на номерные ToC-строки,
   строит map нормализованный-bare→prefix, приклеивает префикс к LLM-title без digit/§ начала.
-  Wired into `_llm_from_text`, `_llm_from_text_retry`, `_ocr_then_llm`. 290 unit-tests.
+  Wired into `_llm_from_text`, `_llm_from_text_retry`, `_ocr_then_llm`.
   digital-design NavigationTable: 0/105 → 105/105 prefixed. ВКР real +1.
 - ✅ **Defect B — MISDIAGNOSED.** Изначальный симптом («1.», «5./» как titles) был mojibake
   в cp1251 console. Real titles полные. Разделено на:
   - 1332: empty L1 главы = valid shells (содержание в L2 children).
     `insight_2026-05-30_chapter-shell-empty-content-is-valid`.
-  - 12_100229: heuristic split многострочного title в 3 items.
-    `bug_2026-05-30_heuristic-splits-multi-line-toc-title`.
+  - 12_100229: heuristic split многострочного title в 3 items → **FIXED**.
+- ✅ **Multi-line wrap merge — FIXED.** Mapping-side `merge_wrap_continuations` склеивает
+  соседние items когда gap ≤ 5 chars, тот же level/page, trusted strategy, и nxt без своего
+  numeric prefix. Own-prefix guard защищает MIL-STD от ложных склеек «5.11.1»+«5.11.1.1».
+  12_100229: 10 склеек, 0 ложных в корпусе. 302 unit-tests.
+- ✅ **`effective_real_sections` метрика** в `run_corpus.py`: считает секцию покрытой если
+  её content >100 ИЛИ у её descendant'а content >100. Честная отчётность для иерархических
+  книг (1332: real 51 → eff 61; parallelnoe: 243 → 246; Массель: 20 → 23).
+- ✅ **Промпт `extract_toc_json` сужен:** rule 4 явно «короткий заголовок, не описание/
+  первое предложение», rule 5 сохраняет требование на префикс с примером.
 
 ## Active work (session 005 — DONE)
 - ✅ `_drop_fuzzy_pageless_dupes` в `toc_builder._dedup_and_order` — fuzzy ≥ 0.88 на title-norm,

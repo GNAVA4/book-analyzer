@@ -1,5 +1,41 @@
 # BUG: Heuristic splits a multi-line ToC title into 2-3 separate items
-_Filed: 2026-05-30 session 006 | Status: open_
+_Filed: 2026-05-30 session 006 | Status: FIXED (mapping-side post-process)_
+_Fixed: 2026-05-30 session 006_
+
+## Fix (applied)
+Instead of changing the heuristic parser (risky), added a post-process pass in
+`mapping_pipeline.merge_wrap_continuations` called from `pdf_parser_neural` after
+`map_sequence`. It detects adjacent items where:
+- gap between `end_idx[N]` and `start_idx[N+1]` ≤ 5 chars
+- same level (heuristic level assignment matches)
+- same page (when both have pages)
+- both strategies are trustworthy (exact / exact_normalized / tokenized / page_hint_exact*)
+- nxt title does NOT start with its own numerical prefix (digit, §, "Глава N", "Chapter N")
+
+When detected, titles are joined and the wrap items removed from both `mapped` and
+`sequence` (so NavigationTable also reflects the merge).
+
+The own-prefix guard was added after the first corpus run, where MIL-STD lost 15
+legitimate subsections because sequences like «5.11.1 Stairs…» immediately followed by
+«5.11.1.1 General criteria» looked like wraps. The guard recognises 5.11.1.1 as a real
+sub-item, not a continuation.
+
+Live (tests_v6):
+- 12_100229: 10 wrap-merges, sec 328→318. §1.1 and peers now have full content;
+  effective_real 301→309.
+- MIL-STD: own-prefix guard rejects all 15 false candidates; sec stays at 747.
+- No other book in the corpus triggers wrap-merge (gap > 5 chars elsewhere).
+- 302 unit tests pass (+10 for wrap-merge, including own-prefix rejection cases).
+
+## Affected files
+- `app/services/mapping_pipeline.py` — `merge_wrap_continuations`, `_is_wrap_continuation`,
+  `_OWN_NUMERIC_PREFIX`, `_TRUSTED_FOR_WRAP`.
+- `app/services/pdf_parser_neural.py` — call site after `map_sequence`.
+- `tests/test_mapping_pipeline.py` — `TestMergeWrapContinuations` (10 cases).
+
+---
+_Original analysis below:_
+
 
 ## Symptom
 On books where ToC titles wrap across 2-3 lines, `HeuristicParser` treats the continuation

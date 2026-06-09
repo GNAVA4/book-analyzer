@@ -106,10 +106,77 @@ Closed the misdiagnosed bug, filed the two new entries.
 - `.project-brain/bugs/bug_2026-05-30_heuristic-splits-multi-line-toc-title.md` — NEW.
 - `.project-brain/insights/insight_2026-05-30_chapter-shell-empty-content-is-valid.md` — NEW.
 
+## Round 2 of session 006: wrap-merge + metric + prompt polish
+
+After the Defect A / B discussion, picked three improvements with high impact and low risk
+and shipped them in one batch.
+
+### Wrap-continuation merge (closes 12_100229 bug)
+Added `merge_wrap_continuations` in mapping_pipeline, called from neural parser after
+`map_sequence`. Detects pairs where `start_idx[N+1] - end_idx[N] ≤ 5 chars`, same page,
+same level, both with trusted match strategy. Joins titles and removes the wrap items
+from both `mapped` and `sequence` so NavigationTable reflects the merge.
+
+First corpus run showed two books affected: 12_100229 (10 legitimate wraps, all §1.x
+multi-line titles) and MIL-STD (15 wraps that were actually false positives — sequences
+like «5.11.1 Stairs…» followed immediately by «5.11.1.1 General criteria» looked like
+wraps because the heuristic level-assignment matched). MIL-STD dropped 15 real
+subsections.
+
+Added own-prefix guard `_OWN_NUMERIC_PREFIX`: if the next title starts with a digit, §,
+"Глава N", "Chapter N", "Часть N", "Part N" — reject the merge. Re-ran 12_100229 +
+MIL-STD: 12_100229 keeps its 10 legitimate merges, MIL-STD untouched at 747. Guard works.
+
+### Effective_real_sections metric
+Added to `run_corpus.py:build_stats`. Counts a section as content-covered if it OR any
+descendant has content > 100 chars. Reports honestly on hierarchical books that have
+empty chapter shells with content-bearing subsections.
+
+Corpus reports:
+- 1332: real 51/61, eff 61/61 (10 chapter shells were valid)
+- 12_100229: real 301/318, eff 309/318
+- Машинное обучение: real 227/228, eff 228/228
+- parallelnoe: real 243/248, eff 246/248
+- Розенсон: 74→75
+- ВКР: 12→13
+- Массель: 20→23
+- MIL-STD: 594→617
+
+### Prompt tighten
+The earlier Defect A prompt push to preserve hierarchical numbering accidentally
+encouraged the LLM to extend titles into the first sentence of the section. 978-5-7996
+came back with «Предмет статистики – изучение массовых общественных явлений…» where it
+should have returned «1. Предмет статистики». Reworded rule 4 explicitly as "short
+heading, don't add descriptions"; kept rule 5 with the numerical-prefix example.
+
+### LLM nondeterminism observed (not a regression)
+On the v6 corpus run, three books showed LLM-side wobble unrelated to the mapping change:
+- Иглмен real 22→19 (some content shifted from «Часть I/II/III» into chapters 6 and 7);
+  same toc source (llm), same total, wrap-merge didn't fire — pure LLM nondet.
+- 978-5-7996 source flipped llm → ocr_llm; smart-fallback escalation kicked in. real
+  32→22 but avg_conf jumped 0.45 → 0.85 and page_cut dropped 24→2.
+- ВКР source flipped llm → heuristic (back to v4 behaviour).
+
+These are known LLM-side variability. Filed as a low-priority follow-up: maybe bump
+`_llm_from_text_retry` attempts from 3 to 5 for stability.
+
+## Round 2 files changed
+- `app/services/mapping_pipeline.py` — `merge_wrap_continuations`, `_is_wrap_continuation`,
+  `_TRUSTED_FOR_WRAP`, `_OWN_NUMERIC_PREFIX`.
+- `app/services/pdf_parser_neural.py` — call site after `map_sequence`.
+- `app/services/llm_engine.py` — `extract_toc_json` prompt polish.
+- `scripts/run_corpus.py` — `_effective_real_count`, `effective_real_sections` field in
+  stats and summary output.
+- `tests/test_mapping_pipeline.py` — `TestMergeWrapContinuations` (10 cases).
+
 ## End state
 Branch `llm-toc-fallback`. Defect A code shipped and corpus-verified (no regressions).
 Defect B doesn't exist as filed — replaced by an insight (1332) and a more accurate bug
-(12_100229).
+(12_100229), which is now FIXED via the wrap-merge logic. 302 unit tests pass.
+
+Three round-2 wins: 12_100229 §1.x sections recovered, honest metric reporting via
+effective_real_sections, prompt tightened. One follow-up: LLM nondeterminism still
+swings results across runs on Иглмен / 978-5-7996.
 
 Open priorities for next session:
 - 12_100229 multi-line-title-split — needs careful parser design.

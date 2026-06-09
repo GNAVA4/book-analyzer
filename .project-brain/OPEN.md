@@ -31,20 +31,24 @@ _(nothing active)_
   but body OCR drift defeats exact matches; real stays 20/105. Need an OCR-aware fuzzy tier
   between regex and embedding rescue (или edit-distance fuzzy_rescue с пониженным порогом
   для коротких слов).
-- [ ] **Heuristic splits multi-line ToC title** — 12_100229: «§1.1. Простейшие модели и
-  система \n параметров логических элементов \n Простейшие модели логических элементов»
-  treated as 3 items, content of §1.1 collapses to 1 char. См. `bug_2026-05-30_heuristic-
-  splits-multi-line-toc-title`. Tricky to fix without regressing wrap detection elsewhere.
-- [ ] **Metric refinement** — `effective_real_sections` should count L1 with content-bearing
-  L2 children as covered, not "empty". Без этого 1332 кажется битой при real 51/61.
+- [x] **Heuristic splits multi-line ToC title** — FIXED 2026-05-30 (session 006) via
+  mapping-side `merge_wrap_continuations` with own-prefix guard. 12_100229: 10 sections
+  recovered. MIL-STD untouched after guard.
+- [x] **Metric refinement** — DONE 2026-05-30 (session 006). `effective_real_sections` в
+  `run_corpus.py`. 1332 теперь 61/61, parallelnoe 246/248, 12_100229 309/318 (отражает
+  реальное покрытие).
 - [ ] **MIL-STD 5.1.2.5 absorbed +61k chars** — Class-2 residual? Замерить через
   `audit_content.py`, проверить, какая секция реально должна владеть этим текстом.
 - [ ] **Клейнман: live 36 page_cut vs CONTEXT claim 0** — `scripts/mapping_audit.py` показывает
   одно, реальный пайплайн — другое. Разобраться где правда и обновить.
-- [ ] **978-5-7996 длинные descriptive title после Defect A prompt fix** — LLM начала
-  давать «Предмет статистики – изучение массовых общественных явлений…» вместо «Предмет
-  статистики». Real-count тот же, но title-quality визуально хуже. Возможно сократить
-  пример в промпте или явно сказать «short heading, not first sentence».
+- [x] **978-5-7996 длинные descriptive title** — Промпт сужен (session 006): rule 4
+  явно говорит «short heading, don't add descriptions». На прогоне tests_v6 LLM
+  переключилась на ocr_llm source (smart-fallback escalation), real 32→22 — это
+  LLM-nondeterminism on new prompt, не регрессия маппинга.
+- [ ] **LLM nondeterminism on новом промпте** — Иглмен real 22→19, 978-5-7996 source
+  flip llm→ocr_llm, ВКР откат llm→heuristic. Один и тот же промпт даёт разные ответы
+  от прогона к прогону. Возможно поднять attempts в `_llm_from_text_retry` с 3 до 5
+  для большей стабильности. Низкий приоритет — качественно не катастрофично.
 
 ## TODO (продолжающиеся из сессии 004)
 - [ ] **MIL-STD 154 not-found / 92 EMPTY** — coverage .944 → text present but mis-attributed; likely class 2.
@@ -76,6 +80,9 @@ content mapping is the bottleneck for OCR/LLM books.
 - [x] `bug_2026-05-30_heuristic-loses-chapter-title-after-number.md` — MISDIAGNOSED;
   replaced by `insight_2026-05-30_chapter-shell-empty-content-is-valid` (1332) and
   `bug_2026-05-30_heuristic-splits-multi-line-toc-title` (12_100229).
+- [x] `bug_2026-05-30_heuristic-splits-multi-line-toc-title.md` — FIXED 2026-05-30
+  (mapping-side `merge_wrap_continuations` + own-prefix guard). 12_100229: 10 sections
+  recovered. MIL-STD: zero false positives after guard. +10 unit tests, total 302.
 
 ## Closed bugs (prior sessions)
 - [x] `bug_2026-05-28_release-it-regression.md` — session 001.
