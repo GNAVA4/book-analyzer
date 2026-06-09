@@ -1,5 +1,5 @@
 # OPEN ITEMS — Book Analyzer
-_Last updated: 2026-05-30 session 005_
+_Last updated: 2026-05-30 session 006_
 
 ## In progress
 _(nothing active)_
@@ -13,20 +13,38 @@ _(nothing active)_
 - [x] **Corpus run 19 books** → tests_v4 — new baseline. 12 books v3↔v4 diff analyzed (mostly
   no-op for my fixes), 7 new books surfaced 2 new defect classes.
 
-## TODO (новые приоритеты — после нового корпуса)
-- [ ] **Дефект А: LLM strips hierarchical numbering** — digital-design (20/105 real, ocr_llm),
-  978-5-7996 (24/32 page_cut, llm). См. `bug_2026-05-30_llm-strips-hierarchical-numbering`.
-  Подходы: фикс prompt + post-process в `_normalize_llm_items` (re-attach prefix из raw text).
-- [ ] **Дефект Б: Heuristic loses chapter name after number** — 1332 (10 пустых «1.», «2.»),
-  12_100229 (6 пустых + дубли split-а). См. `bug_2026-05-30_heuristic-loses-chapter-title-
-  after-number`. Подход: multi-line lookahead в `HeuristicParser`.
+## Done this session (was in progress)
+- [x] **Дефект А: LLM strips hierarchical numbering** — FIXED at ToC level (session 006).
+  Prompt update + `_reattach_numerical_prefixes` safety net. digital-design ToC 0/105 →
+  105/105 prefixed; ВКР real +1; 15 books unchanged. 290 unit tests. Code shipped.
+  Body-mapping for OCR-heavy books still poor (digital-design real stays 20/105) — это
+  отдельная задача OCR-aware fuzzy mapping, не часть Дефекта А.
+- [x] **Дефект Б** — MISDIAGNOSED. Original symptom ("1.", "5./" as titles) was mojibake
+  in cp1251 console. Real titles are full. Splits into two follow-ups:
+  - 1332: empty L1 chapters are valid shells with content-bearing children
+    ([[insight_2026-05-30_chapter-shell-empty-content-is-valid]]).
+  - 12_100229: heuristic splits multi-line ToC titles
+    ([[bug_2026-05-30_heuristic-splits-multi-line-toc-title]]).
+
+## TODO (новые приоритеты после сессии 006)
+- [ ] **OCR-aware body mapping for LLM-source books** — digital-design has correct ToC now
+  but body OCR drift defeats exact matches; real stays 20/105. Need an OCR-aware fuzzy tier
+  between regex and embedding rescue (или edit-distance fuzzy_rescue с пониженным порогом
+  для коротких слов).
+- [ ] **Heuristic splits multi-line ToC title** — 12_100229: «§1.1. Простейшие модели и
+  система \n параметров логических элементов \n Простейшие модели логических элементов»
+  treated as 3 items, content of §1.1 collapses to 1 char. См. `bug_2026-05-30_heuristic-
+  splits-multi-line-toc-title`. Tricky to fix without regressing wrap detection elsewhere.
+- [ ] **Metric refinement** — `effective_real_sections` should count L1 with content-bearing
+  L2 children as covered, not "empty". Без этого 1332 кажется битой при real 51/61.
 - [ ] **MIL-STD 5.1.2.5 absorbed +61k chars** — Class-2 residual? Замерить через
-  `audit_content.py` на v4, проверить, какая секция реально должна владеть этим текстом.
+  `audit_content.py`, проверить, какая секция реально должна владеть этим текстом.
 - [ ] **Клейнман: live 36 page_cut vs CONTEXT claim 0** — `scripts/mapping_audit.py` показывает
   одно, реальный пайплайн — другое. Разобраться где правда и обновить.
-- [ ] **OCR digital-design — drift в titles** («прицелы»/«принципы»). Below FUZZY_THRESHOLD=0.85.
-  Опционально: понизить порог fuzzy_rescue для коротких слов, или второй проход с OCR-aware
-  edit-distance.
+- [ ] **978-5-7996 длинные descriptive title после Defect A prompt fix** — LLM начала
+  давать «Предмет статистики – изучение массовых общественных явлений…» вместо «Предмет
+  статистики». Real-count тот же, но title-quality визуально хуже. Возможно сократить
+  пример в промпте или явно сказать «short heading, not first sentence».
 
 ## TODO (продолжающиеся из сессии 004)
 - [ ] **MIL-STD 154 not-found / 92 EMPTY** — coverage .944 → text present but mis-attributed; likely class 2.
@@ -35,8 +53,10 @@ _(nothing active)_
 - [ ] **Fix PIPELINE_DIFF.md note** — says "LLM clean is sequential", actually asyncio.gather.
 
 ## Open bugs
-- [ ] `bug_2026-05-30_llm-strips-hierarchical-numbering.md` (HIGH, new) — see Дефект А above.
-- [ ] `bug_2026-05-30_heuristic-loses-chapter-title-after-number.md` (HIGH, new) — see Дефект Б above.
+- [x] `bug_2026-05-30_llm-strips-hierarchical-numbering.md` — FIXED at ToC level session 006.
+  Body-mapping residual for OCR-heavy books moved into separate OCR-aware-fuzzy TODO.
+- [x] `bug_2026-05-30_heuristic-loses-chapter-title-after-number.md` — CLOSED misdiagnosed.
+- [ ] `bug_2026-05-30_heuristic-splits-multi-line-toc-title.md` (NEW session 006) — 12_100229.
 - [ ] `bug_2026-05-29_vkr-toc-duplicate-chapter.md` — ToC dup PART closed; residual ВВЕДЕНИЕ/
   ЗАКЛЮЧЕНИЕ getting ToC fragments (mapping side, same class as subsection-into-toc).
 - [ ] `bug_2026-05-29_subsection-maps-into-toc.md` — residual: Кениг «3.Свет»/«4.Текстура».
@@ -49,6 +69,13 @@ content mapping is the bottleneck for OCR/LLM books.
 ## Closed this session
 - [x] `bug_2026-05-29_ocr-drops-parseable-pages.md` — FIXED 2026-05-30 (recover from 400 body
   + PyMuPDF text-layer fallback), live-verified on 0e6e53b.
+
+## Closed session 006
+- [x] `bug_2026-05-30_llm-strips-hierarchical-numbering.md` — FIXED 2026-05-30 (prompt +
+  `_reattach_numerical_prefixes`). 290 unit tests. digital-design ToC fully prefixed.
+- [x] `bug_2026-05-30_heuristic-loses-chapter-title-after-number.md` — MISDIAGNOSED;
+  replaced by `insight_2026-05-30_chapter-shell-empty-content-is-valid` (1332) and
+  `bug_2026-05-30_heuristic-splits-multi-line-toc-title` (12_100229).
 
 ## Closed bugs (prior sessions)
 - [x] `bug_2026-05-28_release-it-regression.md` — session 001.

@@ -1,5 +1,5 @@
 # PROJECT CONTEXT — Book Analyzer
-_Last updated: 2026-05-30 session 005_
+_Last updated: 2026-05-30 session 006_
 
 ## What this project is
 PDF/DOCX/TXT book parser: extracts Table of Contents and section content into structured XML files.
@@ -11,7 +11,7 @@ Models: `qwen2.5-7b-instruct` (LLM, ctx=8192), `glm-ocr` (vision OCR), `text-emb
 Frontend: single-page `static/index.html` (vanilla JS + dark theme)
 Server runs via venv: `c:\book analyzer\venv\Scripts\python.exe -m uvicorn app.main:app`
 
-## Current state — session 005 corpus (tests_v4/, 19 books)
+## Current state — session 006 corpus (tests_v5/, 19 books)
 
 | Книга | Real/Total | toc | Note |
 |---|---|---|---|
@@ -33,7 +33,20 @@ Server runs via venv: `c:\book analyzer\venv\Scripts\python.exe -m uvicorn app.m
 | **978-5-7996** *(new)* | 32/32 | llm | **Дефект А: LLM strips numbering, 24 page_cut** |
 | **1332** *(new)* | 51/61 | heuristic | **Дефект Б: 10 titles = только «1. », «2. »…** |
 | **12_100229** *(new)* | 301/328 | heuristic | **Дефект Б + дубли split-а в §-нотации** |
-| **digital-design** *(new)* | 20/105 | ocr_llm | **Дефект А + OCR drift в titles** — каша |
+| **digital-design** *(new)* | 20/105 | ocr_llm | **ToC FIXED (s6): все 105 titles с префиксами**. Body mapping ещё страдает — OCR drift в теле требует OCR-aware fuzzy |
+
+## Active work (session 006 — DONE)
+- ✅ **Defect A (LLM strips hierarchical numbering) — FIXED at ToC level.** Prompt update +
+  `_reattach_numerical_prefixes` страховочная сетка. Сканирует raw text на номерные ToC-строки,
+  строит map нормализованный-bare→prefix, приклеивает префикс к LLM-title без digit/§ начала.
+  Wired into `_llm_from_text`, `_llm_from_text_retry`, `_ocr_then_llm`. 290 unit-tests.
+  digital-design NavigationTable: 0/105 → 105/105 prefixed. ВКР real +1.
+- ✅ **Defect B — MISDIAGNOSED.** Изначальный симптом («1.», «5./» как titles) был mojibake
+  в cp1251 console. Real titles полные. Разделено на:
+  - 1332: empty L1 главы = valid shells (содержание в L2 children).
+    `insight_2026-05-30_chapter-shell-empty-content-is-valid`.
+  - 12_100229: heuristic split многострочного title в 3 items.
+    `bug_2026-05-30_heuristic-splits-multi-line-toc-title`.
 
 ## Active work (session 005 — DONE)
 - ✅ `_drop_fuzzy_pageless_dupes` в `toc_builder._dedup_and_order` — fuzzy ≥ 0.88 на title-norm,
@@ -95,6 +108,14 @@ Server runs via venv: `c:\book analyzer\venv\Scripts\python.exe -m uvicorn app.m
 - **NEW (session 005): OCR 400 recovery**: glm-ocr `Failed to parse input at pos N` errors embed the
   page text in the body; extract via regex on `body['error']`/`str(e)`; fallback on `page.get_text()`.
   Never silently drop pages.
+- **NEW (session 006): LLM ToC numerical prefix preservation**: prompt explicitly требует
+  сохранять «1», «1.2», «1.2.3», «§ 1.4», «Глава 5» как часть title. Плюс post-process
+  `_reattach_numerical_prefixes` приклеивает префикс из raw text если LLM всё же срезал.
+  Применяется ко ВСЕМ путям LLM-извлечения ToC.
+- **NEW (session 006): «empty L1 главы» в отчётах ≠ потеря контента**. Если у L1 секции
+  есть L2 children с реальным контентом — это правильная иерархическая структура (1332).
+  Метрика `real_content_sections` обманывает; нужен `effective_real_sections` который
+  засчитывает coverage через детей.
 
 ## Known landmines ⚠️
 - **GPU max 90%**: at 100% user's display disappears — never load all models simultaneously
