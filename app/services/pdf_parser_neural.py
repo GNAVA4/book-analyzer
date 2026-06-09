@@ -167,7 +167,10 @@ async def parse_pdf_neural(
     if progress_callback:
         await progress_callback(20, f"Маппинг {len(sequence)} секций...")
 
-    mapped = await map_sequence(sequence, full_text, total_pages, progress_callback)
+    mapped = await map_sequence(
+        sequence, full_text, total_pages, progress_callback,
+        toc_source=toc_source,
+    )
     # Свернуть многострочные wrap-continuations: эвристика иногда режет один
     # заголовок ToC на 2-3 пункта, и в теле они идут одной полосой → секции
     # съедают тело друг друга. Здесь склеиваем title и удаляем дубль.

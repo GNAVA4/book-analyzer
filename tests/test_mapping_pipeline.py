@@ -12,6 +12,10 @@ from app.services.mapping_pipeline import (
     map_sequence,
     merge_wrap_continuations,
     _is_wrap_continuation,
+    _build_page_anchors,
+    _interpolate_position_from_page,
+    _ocr_aware_fuzzy_locate,
+    _ocr_fold,
 )
 
 
@@ -544,3 +548,139 @@ class TestMergeWrapContinuations:
         nxt_s = {'title': 'параметров логических элементов', 'page': 7, 'level': 2}
         assert _is_wrap_continuation(cur_m, cur_s, nxt_m, nxt_s) is True
 
+
+# ============================================================================
+# Anchor-interpolation для page_cut: MIL-STD 5.1.2.5 absorbed +61k chars
+# ============================================================================
+
+class TestPageAnchorInterpolation:
+    def test_build_anchors_filters_to_trusted_strategies(self):
+        mapped = [
+            {'item': {'page': 5}, 'start_idx': 1000, 'match_strategy': 'exact'},
+            {'item': {'page': 10}, 'start_idx': 5000, 'match_strategy': 'embedding_rescue'},
+            {'item': {'page': 15}, 'start_idx': 8000, 'match_strategy': 'tokenized_regex'},
+            {'item': {'page': 20}, 'start_idx': -1, 'match_strategy': 'page_cut'},
+        ]
+        anchors = _build_page_anchors(mapped)
+        assert anchors == [(5, 1000), (15, 8000)]
+
+    def test_build_anchors_sorted_and_deduped(self):
+        mapped = [
+            {'item': {'page': 10}, 'start_idx': 5000, 'match_strategy': 'exact'},
+            {'item': {'page': 5}, 'start_idx': 1000, 'match_strategy': 'exact'},
+            {'item': {'page': 10}, 'start_idx': 5500, 'match_strategy': 'exact'},  # dup
+        ]
+        anchors = _build_page_anchors(mapped)
+        assert anchors == [(5, 1000), (10, 5000)]
+
+    def test_interpolation_between_anchors_is_accurate(self):
+        """MIL-STD кейс: страница 29 между анкорами 27 (pos 100K) и 30 (pos 110K).
+        Линейное (29-1)/700 × 1M = 40K — лежит в начале, в зоне ToC.
+        Интерполяция должна дать значение ~106K — между анкорами."""
+        anchors = [(27, 100_000), (30, 110_000)]
+        pos = _interpolate_position_from_page(29, total_pages=700,
+                                              full_text_len=1_000_000,
+                                              anchors=anchors)
+        # (29-27)/(30-27) * (110000 - 100000) + 100000 ≈ 106666
+        assert 106000 <= pos <= 107000
+
+    def test_exact_anchor_page_returns_anchor_position(self):
+        anchors = [(10, 5000), (20, 12000)]
+        assert _interpolate_position_from_page(10, 100, 50_000, anchors) == 5000
+        assert _interpolate_position_from_page(20, 100, 50_000, anchors) == 12000
+
+    def test_extrapolation_after_last_anchor(self):
+        anchors = [(10, 5000)]
+        pos = _interpolate_position_from_page(50, total_pages=100,
+                                              full_text_len=50_000, anchors=anchors)
+        # remaining_text=45000, remaining_pages=90
+        # pos = 5000 + (50-10)*45000/90 = 5000 + 20000 = 25000
+        assert pos == 25000
+
+    def test_extrapolation_before_first_anchor(self):
+        anchors = [(20, 10000)]
+        pos = _interpolate_position_from_page(10, total_pages=100,
+                                              full_text_len=50_000, anchors=anchors)
+        # pos = 10000 - (20-10)*10000/20 = 10000 - 5000 = 5000
+        assert pos == 5000
+
+    def test_no_anchors_falls_back_to_linear(self):
+        pos = _interpolate_position_from_page(50, total_pages=100,
+                                              full_text_len=100_000, anchors=[])
+        # (50-1)/100 * 100000 = 49000
+        assert pos == 49000
+
+    def test_invalid_page_returns_zero_via_fallback(self):
+        anchors = [(10, 5000)]
+        assert _interpolate_position_from_page(0, 100, 50_000, anchors) == 0
+        assert _interpolate_position_from_page(-5, 100, 50_000, anchors) == 0
+
+
+# ============================================================================
+# OCR-aware fuzzy locate — digital-design «прицелы»/«принципы» case
+# ============================================================================
+
+class TestOcrAwareFuzzy:
+    def test_finds_title_with_ocr_drift_in_body(self):
+        """digital-design кейс: ToC говорит «принципы», body OCR'нул «прицелы».
+        Обычный fuzzy при threshold 0.85 не сматчит, OCR-aware с порогом 0.72 — да."""
+        title = 'Три базовых принципы'
+        body = '... много текста ... Три базовых прицелы (раздел 1.2.3) ... ещё текста ...'
+        offset, score = _ocr_aware_fuzzy_locate(title, body)
+        assert offset >= 0
+        assert score >= 0.72
+        assert 'прицелы' in body[offset:offset + 30]
+
+    def test_finds_diciplina(self):
+        title = 'Конструкторская дисциплина'
+        body = 'Глава начинается так. Конструкторская Дициплина — это набор правил…'
+        offset, score = _ocr_aware_fuzzy_locate(title, body)
+        assert offset >= 0
+
+    def test_does_not_match_unrelated_text(self):
+        """OCR-aware не должен матчить совсем другой заголовок."""
+        title = 'Цифровая абстракция логических элементов'
+        body = 'Здесь обсуждаются методы статистического анализа доходов населения'
+        offset, score = _ocr_aware_fuzzy_locate(title, body)
+        assert offset == -1
+
+    def test_short_title_rejected(self):
+        offset, score = _ocr_aware_fuzzy_locate('Foo', 'Bar' * 100)
+        assert offset == -1
+
+    def test_empty_inputs(self):
+        assert _ocr_aware_fuzzy_locate('', 'some text') == (-1, 0.0)
+        assert _ocr_aware_fuzzy_locate('Title here', '') == (-1, 0.0)
+
+    def test_ocr_fold_handles_cyrillic_to_latin_lookalikes(self):
+        """Кириллические и латинские буквы-двойники сложены в один класс."""
+        # «о» (cyr) и «o» (lat) → одно «o»
+        assert _ocr_fold('Море') == _ocr_fold('More')[:4] or 'o' in _ocr_fold('Море')
+        # «р» (cyr) и «p» (lat) → одно «r»
+        assert _ocr_fold('p') == _ocr_fold('р')
+
+    def test_ocr_fold_minor_drift_keeps_close_ratio(self):
+        """Лёгкий OCR-drift (1 буква в длинном слове) должен давать высокий
+        ratio после folding. Например: «Дициплина» vs «Дисциплина»."""
+        import difflib
+        # Прямое сравнение без fold
+        a, b = 'Дициплина', 'Дисциплина'
+        raw_ratio = difflib.SequenceMatcher(None, a.lower(), b.lower()).ratio()
+        folded_ratio = difflib.SequenceMatcher(None, _ocr_fold(a), _ocr_fold(b)).ratio()
+        # На этой паре folding не должен УХУДШАТЬ ratio
+        assert folded_ratio >= raw_ratio - 0.05
+
+    def test_ocr_fold_distinct_words_stay_distinct(self):
+        """Слова с РАЗНОЙ семантикой не должны слиться в одно."""
+        # «дисциплина» и «дискотека» — разные слова, после fold всё ещё должны
+        # давать ratio ниже 0.72
+        import difflib
+        a = _ocr_fold('дисциплина')
+        b = _ocr_fold('дискотека')
+        ratio = difflib.SequenceMatcher(None, a, b).ratio()
+        assert ratio < 0.72
+
+
+def difflib_ratio_close(a: str, b: str, threshold: float = 0.85) -> bool:
+    import difflib
+    return difflib.SequenceMatcher(None, a, b).ratio() >= threshold

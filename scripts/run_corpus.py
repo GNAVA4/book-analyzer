@@ -15,6 +15,7 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 import pathlib
 from app.services.pdf_parser_neural import parse_pdf_neural
 from app.services.xml_builder import build_tree_structure, dict_to_xml
+from app.services.content_quality import count_junk_sections
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 PDF_DIR = ROOT / "test"
@@ -47,10 +48,12 @@ def _effective_real_count(flat_nodes):
 def build_stats(flat_nodes, meta):
     def sc(prefix):
         return sum(1 for n in flat_nodes if (n.get("match_strategy") or "").startswith(prefix))
+    junk = count_junk_sections(flat_nodes)
     return {
         "total_sections": len(flat_nodes),
         "real_content_sections": sum(1 for n in flat_nodes if n.get("content") and len(n["content"]) > 100),
         "effective_real_sections": _effective_real_count(flat_nodes),
+        "junk_sections": junk,
         "avg_confidence": round(sum(n.get("confidence", 1.0) for n in flat_nodes) / max(len(flat_nodes), 1), 3),
         "low_confidence_sections": sum(1 for n in flat_nodes if n.get("confidence", 1.0) < 0.80),
         "rescued_page_hint": sc("page_hint"),
@@ -103,7 +106,7 @@ async def process_one(pdf: pathlib.Path):
     (OUT_DIR / (stem + "_report.json")).write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     dt = time.time() - t0
     print(f"  OK {stem[:40]}: sections={stats['total_sections']} real={stats['real_content_sections']} "
-          f"eff={stats['effective_real_sections']} "
+          f"eff={stats['effective_real_sections']} junk={stats['junk_sections']['total']} "
           f"toc={stats['toc_source']} ocr={stats['ocr_used']} ({dt:.0f}s)")
     return {"file": pdf.name, "stats": stats, "sec": dt}
 
@@ -130,8 +133,8 @@ async def main(substrs):
         else:
             s = r["stats"]
             print(f"  {r['file'][:45]:<46} sec={s['total_sections']:>4} real={s['real_content_sections']:>4} "
-                  f"eff={s['effective_real_sections']:>4} "
-                  f"toc={s['toc_source']:<12} cluster={s['reverted_cluster']} pcut={s['page_cut']} ({r['sec']:.0f}s)")
+                  f"eff={s['effective_real_sections']:>4} junk={s['junk_sections']['total']:>3} "
+                  f"toc={s['toc_source']:<12} pcut={s['page_cut']:>3} ({r['sec']:.0f}s)")
 
 
 if __name__ == "__main__":

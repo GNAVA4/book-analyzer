@@ -88,6 +88,83 @@ def _estimate_position_from_page(page: int, total_pages: int, full_text_len: int
     return int(ratio * full_text_len)
 
 
+_TRUSTED_FOR_ANCHOR = frozenset({
+    'exact', 'exact_normalized', 'tokenized_regex',
+    'page_hint_exact', 'page_hint_tokenized_regex',
+})
+
+
+def _build_page_anchors(mapped: list) -> list:
+    """Список (page, position) от уверенно смапленных секций — для интерполяции
+    page_cut.
+
+    Линейная page→position раскладка ломается на книгах, где текст распределён
+    неравномерно: многостраничный ToC в начале (MIL-STD), плотные иллюстрации
+    с малой долей текста (Клейнман), OCR-источник с дрейфом длины. Анкоры
+    приближают истинную картинку, и интерполяция между двумя ближайшими анкорами
+    даёт гораздо более точную оценку page→position, чем глобальное линейное.
+    """
+    anchors: list = []
+    for m in mapped:
+        if m.get('start_idx', -1) < 0:
+            continue
+        if m.get('match_strategy') not in _TRUSTED_FOR_ANCHOR:
+            continue
+        item = m.get('item') or {}
+        p = item.get('page')
+        if not isinstance(p, int) or p < 1:
+            continue
+        anchors.append((p, m['start_idx']))
+    anchors.sort(key=lambda a: (a[0], a[1]))
+    # Дедуп по странице (первый встретившийся анкор остаётся; защита от
+    # коллизий когда одна страница даёт несколько матчей).
+    out: list = []
+    last_page = None
+    for p, pos in anchors:
+        if p != last_page:
+            out.append((p, pos))
+            last_page = p
+    return out
+
+
+def _interpolate_position_from_page(
+    page: int,
+    total_pages: int,
+    full_text_len: int,
+    anchors: list,
+) -> int:
+    """Page→position с интерполяцией между анкорами; fallback на линейное."""
+    if not anchors or not page or page < 1:
+        return _estimate_position_from_page(page, total_pages, full_text_len)
+
+    prev_a = None
+    next_a = None
+    for ap, apos in anchors:
+        if ap == page:
+            return apos
+        if ap < page:
+            prev_a = (ap, apos)
+        else:
+            next_a = (ap, apos)
+            break
+
+    if prev_a and next_a:
+        p0, x0 = prev_a
+        p1, x1 = next_a
+        return x0 + (page - p0) * (x1 - x0) // max(p1 - p0, 1)
+    if prev_a:
+        # Экстраполяция за последний анкор пропорционально оставшимся страницам/тексту.
+        p0, x0 = prev_a
+        remaining_text = max(full_text_len - x0, 0)
+        remaining_pages = max(total_pages - p0, 1)
+        return x0 + (page - p0) * remaining_text // remaining_pages
+    if next_a:
+        # Экстраполяция до первого анкора пропорционально.
+        p1, x1 = next_a
+        return max(0, x1 - (p1 - page) * x1 // max(p1, 1))
+    return _estimate_position_from_page(page, total_pages, full_text_len)
+
+
 def _page_hint_search(
     title: str,
     full_text: str,
@@ -265,6 +342,96 @@ async def _llm_rescue(title: str, window_text: str) -> int:
     return await llm_client.locate_section_in_text(title, window_text)
 
 
+# OCR-распространённые пары символов, которые сливаются для устойчивости fuzzy
+# к опечаткам OCR. После маппинга в один класс расстояние до канонической формы
+# сокращается, и fuzzy сравнивает близкие к истине строки.
+# Пары откалиброваны на ошибках glm-ocr на digital-design / 0e6e53b:
+# «прицелы» / «принципы», «Дициплина» / «Дисциплина», «Наляржение» / «Напряжение».
+_OCR_CHAR_FOLDS = {
+    'и': 'i', 'ы': 'i', 'й': 'i', 'i': 'i',  # русское и/ы/й часто путаются
+    'ц': 'c', 'щ': 'c', 'c': 'c',
+    'н': 'n', 'п': 'n', 'n': 'n',
+    'о': 'o', 'a': 'o', 'а': 'o', '0': 'o',
+    'е': 'e', 'е': 'e', 'ё': 'e', 'e': 'e',  # latin/cyrillic mix
+    'р': 'r', 'p': 'r',
+    'к': 'k', 'k': 'k',
+    'х': 'x', 'x': 'x',
+    'у': 'y', 'y': 'y',
+    'в': 'v', 'b': 'v',
+    'с': 's', 's': 's',
+    'м': 'm', 'm': 'm',
+    'т': 't', 't': 't',
+}
+
+
+def _ocr_fold(text: str) -> str:
+    """Приводит OCR-проблемные символы к каноническим классам.
+
+    После складывания «прицелы» / «принципы» и «Дициплина» / «Дисциплина»
+    имеют гораздо более высокий SequenceMatcher.ratio. Используется только
+    в OCR-aware tier — на обычных матчах это слишком агрессивно.
+    """
+    if not text:
+        return ''
+    out = []
+    for ch in text.lower():
+        out.append(_OCR_CHAR_FOLDS.get(ch, ch))
+    return ''.join(out)
+
+
+OCR_FUZZY_THRESHOLD = 0.72  # ниже обычного 0.85 — OCR дрейф съедает 10-15%
+
+
+def _ocr_aware_fuzzy_locate(
+    title: str,
+    text_window: str,
+    threshold: float = OCR_FUZZY_THRESHOLD,
+) -> tuple[int, float]:
+    """OCR-aware fuzzy: ищет позицию title в окне, применяя character folding
+    и пониженный порог. Возвращает (offset_in_window, score) или (-1, best).
+
+    Используется ТОЛЬКО для книг, где body OCR'нут (toc_source.startswith('ocr')).
+    Без OCR такой порог слишком терпим и даёт ложные срабатывания.
+    """
+    if not title or len(title) < FUZZY_MIN_TITLE_LEN or not text_window:
+        return -1, 0.0
+
+    norm_title = _normalize_for_fuzzy(title)
+    folded_title = _ocr_fold(norm_title)
+    window_len = len(folded_title)
+    if window_len < FUZZY_MIN_TITLE_LEN:
+        return -1, 0.0
+
+    normalized, idx_map = _normalize_with_map(text_window)
+    folded_window = _ocr_fold(normalized)
+    if len(folded_window) < window_len:
+        return -1, 0.0
+
+    stride = max(window_len // 8, 3)
+
+    matcher = difflib.SequenceMatcher(autojunk=False)
+    matcher.set_seq1(folded_title)
+
+    best_norm_idx, best_score = -1, 0.0
+    quick_threshold = max(threshold - 0.10, 0.50)
+
+    for i in range(0, len(folded_window) - window_len + 1, stride):
+        chunk = folded_window[i: i + window_len]
+        matcher.set_seq2(chunk)
+        if matcher.quick_ratio() < quick_threshold:
+            continue
+        score = matcher.ratio()
+        if score > best_score:
+            best_score = score
+            best_norm_idx = i
+
+    if best_score < threshold or best_norm_idx < 0:
+        return -1, best_score
+
+    original_idx = idx_map[best_norm_idx] if best_norm_idx < len(idx_map) else best_norm_idx
+    return original_idx, best_score
+
+
 # --- Главный pipeline --------------------------------------------------------
 
 async def map_sequence(
@@ -272,9 +439,15 @@ async def map_sequence(
     full_text: str,
     total_pages: int,
     progress_cb=None,
+    toc_source: str | None = None,
 ) -> list:
     """
     Многоуровневый маппинг последовательности секций в полный текст.
+
+    toc_source — источник ToC (heuristic / llm / ocr_heuristic / ocr_llm / …).
+    Используется чтобы включить OCR-aware fuzzy tier ТОЛЬКО для книг, где
+    body тоже OCR'нут и страдает от дрейфа символов (digital-design кейс).
+    На heuristic / llm источниках экстра-tier не нужен и может вредить.
 
     Возвращает indices_map того же формата что и find_real_indices.
     """
@@ -317,10 +490,14 @@ async def map_sequence(
         print(f"[mapping] page_hint_rescue: {page_hint_rescued}")
 
     # --- Уровни 3-5: fuzzy → embedding → LLM для оставшихся ---
+    # Если ToC из OCR-источника — добавляем tier OCR-aware fuzzy между обычным
+    # fuzzy и embedding. На non-OCR книгах он не запускается.
+    ocr_aware_enabled = bool(toc_source and toc_source.startswith('ocr'))
     if not_found:
         if progress_cb:
             await progress_cb(9, f"Rescue для {len(not_found)} секций (fuzzy/embedding/LLM)...")
         fuzzy_rescued = 0
+        ocr_fuzzy_rescued = 0
         emb_rescued = 0
         llm_rescued = 0
         for i in not_found:
@@ -380,6 +557,22 @@ async def map_sequence(
                 fuzzy_rescued += 1
                 continue
 
+            # Уровень 3.5: OCR-aware fuzzy — только для OCR-источников.
+            # Складывает классы похожих OCR-символов и снижает порог до 0.72.
+            # Ловит «прицелы»/«принципы», «Дициплина»/«Дисциплина», и т.п.
+            if ocr_aware_enabled:
+                of_offset, of_score = _ocr_aware_fuzzy_locate(title, window_text)
+                if of_offset >= 0:
+                    mapped[i]['start_idx'] = window_start + of_offset
+                    mapped[i]['end_idx'] = min(
+                        window_start + of_offset + len(title) + 20, window_end
+                    )
+                    # confidence ниже обычного fuzzy: OCR fold снижает строгость
+                    mapped[i]['confidence'] = round(min(of_score - 0.20, 0.55), 2)
+                    mapped[i]['match_strategy'] = 'ocr_fuzzy_rescue'
+                    ocr_fuzzy_rescued += 1
+                    continue
+
             # Уровень 4: embedding
             emb_offset, emb_score = await _embedding_rescue(title, window_text)
             if emb_offset >= 0:
@@ -402,9 +595,10 @@ async def map_sequence(
                 mapped[i]['confidence'] = 0.55
                 mapped[i]['match_strategy'] = 'llm_rescue'
                 llm_rescued += 1
-        if fuzzy_rescued or emb_rescued or llm_rescued:
+        if fuzzy_rescued or ocr_fuzzy_rescued or emb_rescued or llm_rescued:
             print(
-                f"[mapping] fuzzy={fuzzy_rescued}, emb={emb_rescued}, llm={llm_rescued}"
+                f"[mapping] fuzzy={fuzzy_rescued}, ocr_fuzzy={ocr_fuzzy_rescued}, "
+                f"emb={emb_rescued}, llm={llm_rescued}"
             )
 
     # --- Восстановление _backup для page-distance секций без rescue ---
@@ -453,6 +647,9 @@ async def map_sequence(
     # скан, декоративный шрифт — PyMuPDF не извлекает), нарезаем контент по
     # позиции страницы из ToC вместо по совпадению с заголовком.
     if total_pages:
+        # Анкоры собираем ДО page_cut цикла: только из уверенно смапленных
+        # секций, чтобы интерполяция не отравлялась самим page_cut'ом.
+        anchors = _build_page_anchors(mapped)
         page_cut = 0
         for m in mapped:
             if m['start_idx'] != -1:
@@ -460,7 +657,9 @@ async def map_sequence(
             page = m['item'].get('page')
             if not page:
                 continue
-            est = _estimate_position_from_page(page, total_pages, full_text_len)
+            est = _interpolate_position_from_page(
+                page, total_pages, full_text_len, anchors
+            )
             if est <= 0:
                 continue
             m['start_idx'] = est
@@ -469,7 +668,8 @@ async def map_sequence(
             m['match_strategy'] = 'page_cut'
             page_cut += 1
         if page_cut:
-            print(f"[mapping] page_cut fallback: {page_cut} sections")
+            print(f"[mapping] page_cut fallback: {page_cut} sections "
+                  f"(anchors: {len(anchors)})")
 
     return mapped
 
