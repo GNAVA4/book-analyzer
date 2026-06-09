@@ -3,6 +3,7 @@
 from app.services.toc_builder import (
     _split_sticky_toc_lines, _count_toc_entry_lines, _looks_incomplete,
     _dedup_and_order, _drop_fuzzy_pageless_dupes,
+    _build_prefix_map, _reattach_numerical_prefixes,
 )
 
 
@@ -162,3 +163,78 @@ class TestDropFuzzyPagelessDupes:
         out = _dedup_and_order(items)
         assert len(out) == 3
         assert out[-1]["title"] == "ЗАКЛЮЧЕНИЕ"
+
+
+class TestReattachNumericalPrefixes:
+    """digital-design / 978-5-7996: LLM срезает «1.2.1» из title; восстанавливаем
+    префикс из той же строки сырого текста, на которой работал LLM."""
+
+    RAW = (
+        "Содержание\n"
+        "1 От нуля до единицы ........................................ 2\n"
+        "1.1 План игры ............................................... 3\n"
+        "1.2 Искусство управления сложностью ......................... 5\n"
+        "1.2.1 Абстракция ............................................ 6\n"
+        "1.2.2 Конструкторская дисциплина ............................ 11\n"
+        "2 Комбинационная логика ..................................... 50\n"
+        "2.1 Введение ................................................ 50\n"
+    )
+
+    def test_reattaches_simple_prefix(self):
+        items = [
+            {"title": "План игры", "page": 3, "level": 2},
+            {"title": "Абстракция", "page": 6, "level": 3},
+        ]
+        out = _reattach_numerical_prefixes(items, self.RAW)
+        titles = [i["title"] for i in out]
+        assert "1.1 План игры" in titles
+        assert "1.2.1 Абстракция" in titles
+
+    def test_does_not_double_prefix_existing(self):
+        items = [{"title": "1.1 План игры", "page": 3, "level": 2}]
+        out = _reattach_numerical_prefixes(items, self.RAW)
+        assert out[0]["title"] == "1.1 План игры"
+
+    def test_leaves_unrecognised_title_alone(self):
+        items = [{"title": "Что-то постороннее", "page": 99, "level": 1}]
+        out = _reattach_numerical_prefixes(items, self.RAW)
+        assert out[0]["title"] == "Что-то постороннее"
+
+    def test_empty_raw_text(self):
+        items = [{"title": "Абстракция", "page": 6, "level": 3}]
+        out = _reattach_numerical_prefixes(items, "")
+        assert out[0]["title"] == "Абстракция"
+
+    def test_handles_paragraph_notation(self):
+        raw = "§ 1.4 Паразитные связи цифровых элементов   26\n"
+        items = [{"title": "Паразитные связи цифровых элементов", "page": 26, "level": 2}]
+        out = _reattach_numerical_prefixes(items, raw)
+        assert out[0]["title"].startswith("§")
+        assert "Паразитные связи" in out[0]["title"]
+
+    def test_intro_without_prefix_stays_bare(self):
+        """Введение без префикса в сыром тексте — не приклеиваем чужой."""
+        raw = "Содержание\nВведение                                        1\n"
+        items = [{"title": "Введение", "page": 1, "level": 1}]
+        out = _reattach_numerical_prefixes(items, raw)
+        assert out[0]["title"] == "Введение"
+
+    def test_first_occurrence_wins_for_duplicate_bare(self):
+        """Если bare title повторяется в сыром тексте, берём префикс с ПЕРВОГО вхождения."""
+        raw = (
+            "1.1 Введение ................. 5\n"
+            "2.1 Введение ................. 50\n"
+        )
+        items = [{"title": "Введение", "page": 5, "level": 2}]
+        out = _reattach_numerical_prefixes(items, raw)
+        assert out[0]["title"] == "1.1 Введение"
+
+    def test_build_prefix_map_basic(self):
+        m = _build_prefix_map(self.RAW)
+        assert m.get("план игры") == "1.1"
+        assert m.get("абстракция") == "1.2.1"
+        assert m.get("искусство управления сложностью") == "1.2"
+
+    def test_build_prefix_map_ignores_garbage(self):
+        m = _build_prefix_map("Просто проза без оглавления и без страниц вообще")
+        assert m == {}

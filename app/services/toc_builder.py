@@ -104,7 +104,7 @@ def _heuristic(text: str) -> list:
 async def _llm_from_text(text: str) -> list:
     """Уровень 2: LLM extract_toc_json от первых страниц."""
     items = await llm_client.extract_toc_json(text[:TOC_LLM_MAX_CHARS])
-    return _normalize_llm_items(items)
+    return _reattach_numerical_prefixes(_normalize_llm_items(items), text)
 
 
 async def _ocr_then_heuristic(doc, progress_cb=None) -> tuple[list, str]:
@@ -124,7 +124,7 @@ async def _ocr_then_llm(ocr_text: str) -> list:
     if not ocr_text:
         return []
     items = await llm_client.extract_toc_json(ocr_text[:TOC_LLM_MAX_CHARS])
-    return _normalize_llm_items(items)
+    return _reattach_numerical_prefixes(_normalize_llm_items(items), ocr_text)
 
 
 async def _deep_scan(full_text: str, progress_cb=None) -> list:
@@ -308,6 +308,84 @@ def _drop_fuzzy_pageless_dupes(items: list) -> list:
     return out
 
 
+# Иерархический номер в начале строки ToC + остаток-название + сепаратор + страница.
+# Матчит «1.2.1 Абстракция .... 6», «§ 1.4 Паразитные связи   22», «3. DEFINITIONS    19».
+# Сделано безопасно: prefix максимум 4 уровня, остаток до сепаратора (.{2+} / 3+ пробелов /
+# многоточие / табы / подчёркивания) и финальный номер страницы 1-4 знака.
+_NUMBERED_TOC_LINE = re.compile(
+    r'^\s*'
+    r'(§\s*)?(\d+(?:\.\d+){0,3}\.?)\s+'        # 1: § (опц), 2: «1.2.1.»
+    r'(.+?)\s*'                                # 3: «Абстракция»
+    r'(?:\.{2,}|\s{3,}|…|\t+|_{2,})'           # сепаратор (лидеры / пробелы / табы)
+    r'\s*\d{1,4}\s*$',
+    re.MULTILINE,
+)
+
+
+def _build_prefix_map(raw_text: str) -> dict:
+    """Map: нормализованный bare-title → номерной префикс из строк ToC сырого текста.
+
+    Используется как страховка: LLM может срезать «1.2.1» в title — мы достаём
+    оригинальный префикс из той же строки сырого текста, по которой LLM работал.
+    Берём ПЕРВОЕ вхождение каждого нормализованного bare-title (первая строка ≈ ToC,
+    не повтор в теле книги).
+    """
+    out: dict = {}
+    if not raw_text:
+        return out
+    for m in _NUMBERED_TOC_LINE.finditer(raw_text):
+        sec = (m.group(1) or '').strip()
+        num = m.group(2).rstrip('.')
+        bare = m.group(3).strip()
+        bare = re.sub(r'[.,;:\s]+$', '', bare)
+        if not bare or len(bare) < 3:
+            continue
+        norm = re.sub(r'\s+', ' ', bare.lower()).strip()
+        if norm not in out:
+            prefix = (sec + ' ' + num).strip() if sec else num
+            out[norm] = prefix
+    return out
+
+
+# Title уже начинается с цифры или §-нотации — префикс присутствует, не трогаем.
+_HAS_NUMERIC_PREFIX = re.compile(r'^\s*(§\s*)?\d')
+
+
+def _reattach_numerical_prefixes(items: list, raw_text: str) -> list:
+    """Восстанавливает иерархический номерной префикс title, если LLM его срезал.
+
+    LLM при `extract_toc_json` иногда возвращает «Абстракция», тогда как сырой
+    текст содержит «1.2.1 Абстракция .... 6». Без префикса title слишком общий →
+    `find_real_indices` находит первое попавшееся вхождение слова, контент мусор.
+
+    Алгоритм:
+      1. Строим из сырого текста map «bare-title-norm → prefix» по строкам с лидерами.
+      2. Для каждого LLM-title: если уже начинается с цифры или § — пропускаем.
+         Иначе нормализуем bare и смотрим в map. Если найден — приклеиваем префикс.
+
+    Безопасно при дублях: первое вхождение фиксируется, поздние повторы (в теле
+    книги) не перетирают. При промахе ничего не меняем.
+    """
+    pmap = _build_prefix_map(raw_text)
+    if not pmap:
+        return items
+    out = []
+    for it in items:
+        title = (it.get('title') or '').strip()
+        if not title or _HAS_NUMERIC_PREFIX.match(title):
+            out.append(it)
+            continue
+        norm = re.sub(r'\s+', ' ', title.lower()).strip()
+        prefix = pmap.get(norm)
+        if prefix:
+            new_it = dict(it)
+            new_it['title'] = f"{prefix} {title}"
+            out.append(new_it)
+        else:
+            out.append(it)
+    return out
+
+
 # --- Helpers -----------------------------------------------------------------
 
 def _normalize_llm_items(items: list) -> list:
@@ -428,7 +506,7 @@ async def _llm_from_text_retry(text: str, attempts: int = 3) -> list:
     expected_min = max(8, int(raw_entries * 0.5))
     for _ in range(attempts):
         items = await llm_client.extract_toc_json(text[:TOC_LLM_MAX_CHARS], extra_instruction=extra)
-        seq = _normalize_llm_items(items)
+        seq = _reattach_numerical_prefixes(_normalize_llm_items(items), text)
         if seq and len(seq) > len(best):
             best = seq
         cjk = check_cjk(seq) if seq else []
