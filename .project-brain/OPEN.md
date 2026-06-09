@@ -1,5 +1,5 @@
 # OPEN ITEMS — Book Analyzer
-_Last updated: 2026-05-30 session 006_
+_Last updated: 2026-06-10 session 007_
 
 ## In progress
 _(nothing active)_
@@ -27,28 +27,33 @@ _(nothing active)_
     ([[bug_2026-05-30_heuristic-splits-multi-line-toc-title]]).
 
 ## TODO (новые приоритеты после сессии 006)
-- [ ] **OCR-aware body mapping for LLM-source books** — digital-design has correct ToC now
-  but body OCR drift defeats exact matches; real stays 20/105. Need an OCR-aware fuzzy tier
-  between regex and embedding rescue (или edit-distance fuzzy_rescue с пониженным порогом
-  для коротких слов).
+- [x] **OCR-aware body mapping** — PARTIAL FIX 2026-06-10 (session 007). Tier
+  `_ocr_aware_fuzzy_locate` добавлен между fuzzy и embedding rescue. Gated by
+  `toc_source.startswith('ocr')`. Live: digital-design 1 хит, 0e6e53b 3 хита.
+  Жесткий OCR drift («прицелы»/«принципы», 3-char diff в 7-char слове) всё ещё ниже
+  порога 0.72 даже после folding — нужна следующая итерация (semantic verification
+  или edit-distance с пониженным порогом + защита от false-positive).
 - [x] **Heuristic splits multi-line ToC title** — FIXED 2026-05-30 (session 006) via
   mapping-side `merge_wrap_continuations` with own-prefix guard. 12_100229: 10 sections
   recovered. MIL-STD untouched after guard.
 - [x] **Metric refinement** — DONE 2026-05-30 (session 006). `effective_real_sections` в
   `run_corpus.py`. 1332 теперь 61/61, parallelnoe 246/248, 12_100229 309/318 (отражает
   реальное покрытие).
-- [ ] **MIL-STD 5.1.2.5 absorbed +61k chars** — Class-2 residual? Замерить через
-  `audit_content.py`, проверить, какая секция реально должна владеть этим текстом.
+- [x] **MIL-STD 5.1.2.5 absorbed +61k chars** — FIXED 2026-06-10 (session 007) через
+  anchor-interpolation в page_cut. 5.1.2.5: 61 677 → 33 chars. Соседи перебалансировались.
 - [ ] **Клейнман: live 36 page_cut vs CONTEXT claim 0** — `scripts/mapping_audit.py` показывает
   одно, реальный пайплайн — другое. Разобраться где правда и обновить.
 - [x] **978-5-7996 длинные descriptive title** — Промпт сужен (session 006): rule 4
   явно говорит «short heading, don't add descriptions». На прогоне tests_v6 LLM
   переключилась на ocr_llm source (smart-fallback escalation), real 32→22 — это
   LLM-nondeterminism on new prompt, не регрессия маппинга.
-- [ ] **LLM nondeterminism on новом промпте** — Иглмен real 22→19, 978-5-7996 source
-  flip llm→ocr_llm, ВКР откат llm→heuristic. Один и тот же промпт даёт разные ответы
-  от прогона к прогону. Возможно поднять attempts в `_llm_from_text_retry` с 3 до 5
-  для большей стабильности. Низкий приоритет — качественно не катастрофично.
+- [x] **LLM nondeterminism — retry bumped 3→5** (session 007). Тривиальный фикс, но
+  не помог 978-5-7996 (sec 33→13→29 across runs). Нужен более глубокий подход (semantic
+  validation of LLM output, или caching prior best result).
+- [ ] **978-5-7996 LLM качание не починилось** — даже после retry 3→5 секции скачут
+  29→13 в tests_v7. Возможно проблема в том, что наша `is_valid` валидация на этой книге
+  ловит разные «валидные» ответы каждый раз и они качественно разные. Может стоит
+  вписать stable-cache по hash от raw_text → выбранный ToC.
 
 ## TODO (продолжающиеся из сессии 004)
 - [ ] **MIL-STD 154 not-found / 92 EMPTY** — coverage .944 → text present but mis-attributed; likely class 2.
@@ -83,6 +88,30 @@ content mapping is the bottleneck for OCR/LLM books.
 - [x] `bug_2026-05-30_heuristic-splits-multi-line-toc-title.md` — FIXED 2026-05-30
   (mapping-side `merge_wrap_continuations` + own-prefix guard). 12_100229: 10 sections
   recovered. MIL-STD: zero false positives after guard. +10 unit tests, total 302.
+
+## Closed session 007
+- [x] **MIL-STD 5.1.2.5 bloat** — FIXED via anchor-interpolation page_cut (61 677 → 33
+  chars). Side effect: 12_100229 real -26, AI real -17 from page_cut redistribution.
+- [x] **content-quality detector** — `content_quality.py` + `junk_sections` метрика в
+  reports. Observation-only сейчас, готов для wiring в mapping pipeline как 3rd verify.
+- [x] **OCR-aware fuzzy tier** — добавлен, gated by toc_source. Слабый эффект (1-3 хита
+  на корпус) из-за того что digital-design OCR drift в body слишком жёсткий для
+  threshold 0.72. Tier живёт, ждёт усиления.
+- [x] **retry 3→5 в `_llm_from_text_retry`** — committed, no major effect on stability.
+
+## Open TODOs for session 008+
+- [ ] **Wire content-quality detector в `_verify_and_correct_order`** as 3rd check:
+  если контент junk → revert в not_found → rescue заново. Может помочь Кенигу, MIL-STD,
+  digital-design.
+- [ ] **Ordering guard for anchor-interpolation page_cut** — может уменьшить
+  redistribution side-effect на 12_100229 / AI. Правило: page_cut позиция должна быть
+  >= позиции previous mapped section.
+- [ ] **Stronger OCR-aware mapping** — для тяжёлого drift'а как «прицелы»/«принципы».
+  Подходы: (а) semantic verification — после fuzzy hit проверить embedding similarity
+  candidate region vs ToC title; (б) sentence-level matching вместо title-level;
+  (в) fuzzy с порогом 0.55-0.65 + защита от false-positive через page-hint window.
+- [ ] **978-5-7996 stable selection** — LLM качание не лечится retry. Возможно нужен
+  cache best-known-good по hash сырого текста.
 
 ## Closed bugs (prior sessions)
 - [x] `bug_2026-05-28_release-it-regression.md` — session 001.

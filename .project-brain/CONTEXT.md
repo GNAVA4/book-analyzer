@@ -1,5 +1,5 @@
 # PROJECT CONTEXT — Book Analyzer
-_Last updated: 2026-05-30 session 006_
+_Last updated: 2026-06-10 session 007_
 
 ## What this project is
 PDF/DOCX/TXT book parser: extracts Table of Contents and section content into structured XML files.
@@ -11,7 +11,7 @@ Models: `qwen2.5-7b-instruct` (LLM, ctx=8192), `glm-ocr` (vision OCR), `text-emb
 Frontend: single-page `static/index.html` (vanilla JS + dark theme)
 Server runs via venv: `c:\book analyzer\venv\Scripts\python.exe -m uvicorn app.main:app`
 
-## Current state — session 006 corpus (tests_v5/, 19 books)
+## Current state — session 007 corpus (tests_v7/, 19 books)
 
 | Книга | Real/Total | toc | Note |
 |---|---|---|---|
@@ -34,6 +34,21 @@ Server runs via venv: `c:\book analyzer\venv\Scripts\python.exe -m uvicorn app.m
 | **1332** *(new)* | 51/61 | heuristic | **Дефект Б: 10 titles = только «1. », «2. »…** |
 | **12_100229** *(new)* | 301/328 | heuristic | **Дефект Б + дубли split-а в §-нотации** |
 | **digital-design** *(new)* | 20/105 | ocr_llm | **ToC FIXED (s6): все 105 titles с префиксами**. Body mapping ещё страдает — OCR drift в теле требует OCR-aware fuzzy |
+
+## Active work (session 007 — DONE)
+- ✅ **Anchor-interpolation page_cut**: `_build_page_anchors` собирает (page, position)
+  из доверенных match-стратегий, `_interpolate_position_from_page` линейно интерполирует
+  между bracketing анкорами. Используется в финальном page_cut цикле. **MIL-STD 5.1.2.5:
+  61 677 → 33 chars** (целевой кейс). Побочный эффект — page_cut redistribution на
+  12_100229 (real -26), AI (-17) — вероятно более честная нарезка, но без manual
+  inspection трудно сказать.
+- ✅ **content_quality.py** + метрика `junk_sections` в reports — детектор leader-dots /
+  bullet / toc_fragment / whitespace. Observation-only сейчас. MIL-STD 80, digital-design
+  36, 12_100229 10. Готов к wiring в `_verify_and_correct_order` как 3rd check.
+- ✅ **OCR-aware fuzzy tier** `_ocr_aware_fuzzy_locate` + `_ocr_fold` между fuzzy и
+  embedding. Gated by `toc_source.startswith('ocr')`. На корпусе 4 хита (3 на 0e6e53b,
+  1 на digital-design). Тяжёлый drift не лечит — нужно усиление.
+- ✅ **retry 3→5 в `_llm_from_text_retry`** — small stability bump, не починил 978-5-7996.
 
 ## Active work (session 006 — DONE)
 - ✅ **Defect A (LLM strips hierarchical numbering) — FIXED at ToC level.** Prompt update +
