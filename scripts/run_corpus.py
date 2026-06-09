@@ -21,12 +21,36 @@ PDF_DIR = ROOT / "test"
 OUT_DIR = ROOT / os.environ.get("OUT_DIR", "tests_v3")
 
 
+def _effective_real_count(flat_nodes):
+    """Count sections that have content >100 chars themselves OR have at least one
+    descendant L>parent with content >100. Honest reporting for hierarchical books
+    where an L1 chapter shell legitimately has no content of its own (1332 case)
+    because everything lives in L2 subsections.
+    """
+    n = len(flat_nodes)
+    has_own = [bool(node.get("content")) and len(node["content"]) > 100 for node in flat_nodes]
+    covered = list(has_own)
+    for i, node in enumerate(flat_nodes):
+        if covered[i]:
+            continue
+        lvl = node.get("level", 1)
+        for j in range(i + 1, n):
+            jlvl = flat_nodes[j].get("level", 1)
+            if jlvl <= lvl:
+                break  # next sibling/parent — descendants window ended
+            if has_own[j]:
+                covered[i] = True
+                break
+    return sum(covered)
+
+
 def build_stats(flat_nodes, meta):
     def sc(prefix):
         return sum(1 for n in flat_nodes if (n.get("match_strategy") or "").startswith(prefix))
     return {
         "total_sections": len(flat_nodes),
         "real_content_sections": sum(1 for n in flat_nodes if n.get("content") and len(n["content"]) > 100),
+        "effective_real_sections": _effective_real_count(flat_nodes),
         "avg_confidence": round(sum(n.get("confidence", 1.0) for n in flat_nodes) / max(len(flat_nodes), 1), 3),
         "low_confidence_sections": sum(1 for n in flat_nodes if n.get("confidence", 1.0) < 0.80),
         "rescued_page_hint": sc("page_hint"),
@@ -79,6 +103,7 @@ async def process_one(pdf: pathlib.Path):
     (OUT_DIR / (stem + "_report.json")).write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     dt = time.time() - t0
     print(f"  OK {stem[:40]}: sections={stats['total_sections']} real={stats['real_content_sections']} "
+          f"eff={stats['effective_real_sections']} "
           f"toc={stats['toc_source']} ocr={stats['ocr_used']} ({dt:.0f}s)")
     return {"file": pdf.name, "stats": stats, "sec": dt}
 
@@ -105,6 +130,7 @@ async def main(substrs):
         else:
             s = r["stats"]
             print(f"  {r['file'][:45]:<46} sec={s['total_sections']:>4} real={s['real_content_sections']:>4} "
+                  f"eff={s['effective_real_sections']:>4} "
                   f"toc={s['toc_source']:<12} cluster={s['reverted_cluster']} pcut={s['page_cut']} ({r['sec']:.0f}s)")
 
 

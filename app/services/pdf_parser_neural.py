@@ -21,7 +21,7 @@ from .llm_engine import llm_client, LLM_BOUNDARY_CONTEXT, scrub_foreign_script
 from .ocr_engine import ocr_client
 from .toc_builder import build_toc
 from .toc_validator import validate_toc_via_ocr
-from .mapping_pipeline import map_sequence
+from .mapping_pipeline import map_sequence, merge_wrap_continuations
 
 
 # Чанки с confidence НИЖЕ этого порога идут в LLM для очистки.
@@ -168,6 +168,10 @@ async def parse_pdf_neural(
         await progress_callback(20, f"Маппинг {len(sequence)} секций...")
 
     mapped = await map_sequence(sequence, full_text, total_pages, progress_callback)
+    # Свернуть многострочные wrap-continuations: эвристика иногда режет один
+    # заголовок ToC на 2-3 пункта, и в теле они идут одной полосой → секции
+    # съедают тело друг друга. Здесь склеиваем title и удаляем дубль.
+    mapped, sequence = merge_wrap_continuations(mapped, sequence)
     stats = get_confidence_stats(mapped)
     print(f"[neural] Маппинг: {stats}")
 

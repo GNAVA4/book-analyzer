@@ -629,3 +629,138 @@ def _verify_and_correct_order(
         )
 
     return mapped
+
+
+# Стратегии, которые мы доверяем для wrap-detection — точные совпадения
+# или близкие к ним. Rescue-стратегии в этот круг не входят: их позиции
+# приблизительные, и совпадение «один в один» по start_idx — артефакт.
+_TRUSTED_FOR_WRAP = frozenset({
+    'exact', 'exact_normalized', 'tokenized_regex',
+    'page_hint_exact', 'page_hint_tokenized_regex',
+})
+
+# Title начинается со СВОЕГО номерного префикса (цифра, §-нотация, «Глава N»).
+# Такой пункт — отдельный subitem, а не продолжение многострочного заголовка
+# предыдущего. Пример из MIL-STD: после «5.11.1 Stairs, ladders…» идёт
+# «5.11.1.1 General criteria» — это уровень глубже, не wrap.
+_OWN_NUMERIC_PREFIX = re.compile(
+    r'^\s*(§\s*\d|\d+(?:\.\d+)*\.?(?:\s|$)|Глава\s+\d|Chapter\s+\d|Часть\s+\d|Part\s+\d)',
+    re.IGNORECASE,
+)
+
+
+def _is_wrap_continuation(cur_m: dict, cur_s: dict,
+                          nxt_m: dict, nxt_s: dict,
+                          max_gap: int = 5) -> bool:
+    """True если nxt — это продолжение многострочного заголовка cur'а.
+
+    Сигнал: оба пункта exact-match в теле, и nxt матчится почти сразу
+    после конца cur'а (≤ max_gap chars между end_cur и start_nxt). Плюс
+    тот же уровень иерархии и та же страница (если у обоих есть).
+
+    Случай 12_100229: «§1.1. Простейшие модели и система \n параметров
+    логических элементов \n Простейшие модели логических элементов» —
+    эвристика разрезала на 2-3 item'а, в теле они идут одной полосой
+    заголовка → start[N+1] - end[N] ≈ 1.
+    """
+    if cur_m.get('start_idx', -1) < 0 or nxt_m.get('start_idx', -1) < 0:
+        return False
+    if cur_m.get('match_strategy') not in _TRUSTED_FOR_WRAP:
+        return False
+    if nxt_m.get('match_strategy') not in _TRUSTED_FOR_WRAP:
+        return False
+    end_cur = cur_m.get('end_idx', cur_m['start_idx'])
+    gap = nxt_m['start_idx'] - end_cur
+    if gap < 0 or gap > max_gap:
+        return False
+    if cur_s.get('level') != nxt_s.get('level'):
+        return False
+    p_cur = cur_s.get('page')
+    p_nxt = nxt_s.get('page')
+    if isinstance(p_cur, int) and isinstance(p_nxt, int) and p_cur != p_nxt:
+        return False
+    # Если у nxt свой собственный номерной префикс — это отдельный subitem
+    # (5.11.1.1 после 5.11.1), не продолжение заголовка. MIL-STD case.
+    nxt_title = nxt_s.get('title') or ''
+    if _OWN_NUMERIC_PREFIX.match(nxt_title):
+        return False
+    return True
+
+
+def merge_wrap_continuations(mapped: list, sequence: list) -> tuple[list, list]:
+    """Объединяет последовательные item'ы-продолжения многострочного заголовка.
+
+    Эвристический парсер ToC иногда разрезает один заголовок, оформленный
+    в книге через перенос строки, на 2-3 отдельных item'а. В теле они
+    стоят встык, и при exact-маппинге между end[N] и start[N+1] остаётся
+    только пара символов → content секции N оказывается ≈ 0, всё тело
+    поглощается «братом»-продолжением.
+
+    Фикс: если такая пара/группа обнаружена, склеиваем title'ы в один
+    item N, расширяем end_idx до последнего, остальные удаляем из обоих
+    списков. Поведение для книг без этой патологии — no-op (gap > 5 chars).
+    """
+    if len(mapped) != len(sequence) or len(mapped) < 2:
+        return mapped, sequence
+
+    skip = [False] * len(mapped)
+    merged_count = 0
+    for i in range(len(mapped) - 1):
+        if skip[i]:
+            continue
+        # cur_end расширяется по мере склейки, чтобы каждое следующее звено
+        # цепочки проверялось относительно нового конца, а не исходного.
+        cur_end = mapped[i].get('end_idx', mapped[i].get('start_idx', -1))
+        j = i + 1
+        while j < len(mapped):
+            synth_cur_m = dict(mapped[i])
+            synth_cur_m['end_idx'] = cur_end
+            if not _is_wrap_continuation(synth_cur_m, sequence[i], mapped[j], sequence[j]):
+                break
+            skip[j] = True
+            new_end = mapped[j].get('end_idx', mapped[j].get('start_idx', -1))
+            if isinstance(new_end, int) and new_end > cur_end:
+                cur_end = new_end
+            j += 1
+            merged_count += 1
+
+    if not merged_count:
+        return mapped, sequence
+
+    out_m: list = []
+    out_s: list = []
+    parent_idx = None
+    cur_title = ""
+    cur_end = -1
+
+    for i in range(len(mapped)):
+        if skip[i]:
+            cur_title = (cur_title + ' ' + (sequence[i].get('title') or '')).strip()
+            new_end = mapped[i].get('end_idx', cur_end)
+            if isinstance(new_end, int) and new_end > cur_end:
+                cur_end = new_end
+            continue
+        # Flush previous parent
+        if parent_idx is not None:
+            new_m = dict(mapped[parent_idx])
+            new_m['end_idx'] = cur_end
+            new_s = dict(sequence[parent_idx])
+            new_s['title'] = cur_title
+            new_m['item'] = new_s
+            out_m.append(new_m)
+            out_s.append(new_s)
+        parent_idx = i
+        cur_title = sequence[i].get('title') or ''
+        cur_end = mapped[i].get('end_idx', mapped[i].get('start_idx', -1))
+
+    if parent_idx is not None:
+        new_m = dict(mapped[parent_idx])
+        new_m['end_idx'] = cur_end
+        new_s = dict(sequence[parent_idx])
+        new_s['title'] = cur_title
+        new_m['item'] = new_s
+        out_m.append(new_m)
+        out_s.append(new_s)
+
+    print(f"[mapping] wrap-merge: collapsed {merged_count} continuation items")
+    return out_m, out_s

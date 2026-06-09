@@ -10,6 +10,8 @@ from app.services.mapping_pipeline import (
     _fuzzy_locate,
     _revert_position_clusters,
     map_sequence,
+    merge_wrap_continuations,
+    _is_wrap_continuation,
 )
 
 
@@ -365,3 +367,180 @@ class TestFuzzyLocate:
         if offset != -1:
             # Подтверждаем что score очень близок к пределу
             assert score >= 0.90
+
+
+# ============================================================================
+# merge_wrap_continuations — Класс multi-line wrapped ToC title
+# ============================================================================
+
+class TestMergeWrapContinuations:
+    """12_100229: heuristic режет многострочный заголовок на 2-3 item'а; в теле
+    они стоят встык → секция теряет контент."""
+
+    def _m(self, start, end, page, level=2, strat='exact'):
+        item = {'title': 'X', 'page': page, 'level': level}
+        return {'item': item, 'start_idx': start, 'end_idx': end,
+                'confidence': 1.0, 'match_strategy': strat}
+
+    def _seq(self, page, level=2, title='X'):
+        return {'title': title, 'page': page, 'level': level}
+
+    def test_merges_two_adjacent_exact_with_same_page_and_level(self):
+        mapped = [
+            self._m(100, 150, page=7),
+            self._m(151, 200, page=7),  # gap = 1 — wrap continuation
+        ]
+        sequence = [
+            self._seq(7, title='§1.1. Простейшие модели и система'),
+            self._seq(7, title='параметров логических элементов'),
+        ]
+        out_m, out_s = merge_wrap_continuations(mapped, sequence)
+        assert len(out_m) == 1
+        assert len(out_s) == 1
+        assert out_s[0]['title'] == '§1.1. Простейшие модели и система параметров логических элементов'
+        assert out_m[0]['end_idx'] == 200
+
+    def test_merges_three_consecutive(self):
+        mapped = [
+            self._m(100, 150, page=7),
+            self._m(151, 180, page=7),
+            self._m(181, 230, page=7),
+        ]
+        sequence = [
+            self._seq(7, title='§1.1. Простейшие модели'),
+            self._seq(7, title='и система параметров'),
+            self._seq(7, title='логических элементов'),
+        ]
+        out_m, out_s = merge_wrap_continuations(mapped, sequence)
+        assert len(out_s) == 1
+        assert 'логических элементов' in out_s[0]['title']
+
+    def test_does_not_merge_when_gap_too_big(self):
+        mapped = [
+            self._m(100, 150, page=7),
+            self._m(2000, 2050, page=7),  # gap = 1850 — реальный контент между
+        ]
+        sequence = [self._seq(7, title='§1.1.'), self._seq(7, title='§1.2.')]
+        out_m, out_s = merge_wrap_continuations(mapped, sequence)
+        assert len(out_s) == 2
+
+    def test_does_not_merge_when_different_level(self):
+        mapped = [
+            self._m(100, 150, page=7, level=1),
+            self._m(151, 200, page=7, level=2),
+        ]
+        sequence = [self._seq(7, level=1), self._seq(7, level=2)]
+        out_m, out_s = merge_wrap_continuations(mapped, sequence)
+        assert len(out_s) == 2
+
+    def test_does_not_merge_when_different_page(self):
+        mapped = [
+            self._m(100, 150, page=7),
+            self._m(151, 200, page=8),
+        ]
+        sequence = [self._seq(7), self._seq(8)]
+        out_m, out_s = merge_wrap_continuations(mapped, sequence)
+        assert len(out_s) == 2
+
+    def test_does_not_merge_when_strategy_untrusted(self):
+        """Rescue-стратегии не используются для wrap — позиции приблизительные."""
+        mapped = [
+            self._m(100, 150, page=7, strat='exact'),
+            self._m(151, 200, page=7, strat='embedding_rescue'),
+        ]
+        sequence = [self._seq(7), self._seq(7)]
+        out_m, out_s = merge_wrap_continuations(mapped, sequence)
+        assert len(out_s) == 2
+
+    def test_handles_unmappable_item_in_middle(self):
+        """Если в середине список item с start_idx=-1, цепочка прерывается."""
+        mapped = [
+            self._m(100, 150, page=7),
+            {'item': {'page': 7, 'level': 2}, 'start_idx': -1, 'end_idx': -1,
+             'confidence': 0.0, 'match_strategy': ''},
+            self._m(151, 200, page=7),
+        ]
+        sequence = [self._seq(7), self._seq(7), self._seq(7)]
+        out_m, out_s = merge_wrap_continuations(mapped, sequence)
+        # Middle item кладёт цепочку (start_idx=-1 не trusted)
+        assert len(out_s) == 3
+
+    def test_noop_on_single_item(self):
+        mapped = [self._m(100, 150, page=7)]
+        sequence = [self._seq(7)]
+        out_m, out_s = merge_wrap_continuations(mapped, sequence)
+        assert out_m == mapped
+        assert out_s == sequence
+
+    def test_noop_on_empty(self):
+        assert merge_wrap_continuations([], []) == ([], [])
+
+    def test_preserves_non_wrap_items(self):
+        """Item'ы без wrap-continuation должны оставаться нетронутыми между мержами."""
+        mapped = [
+            self._m(100, 150, page=7),
+            self._m(151, 200, page=7),    # wrap of 0
+            self._m(5000, 5050, page=10),  # отдельная секция
+            self._m(5051, 5100, page=10),  # wrap of 2
+        ]
+        sequence = [
+            self._seq(7, title='A'),
+            self._seq(7, title='B'),
+            self._seq(10, title='C'),
+            self._seq(10, title='D'),
+        ]
+        out_m, out_s = merge_wrap_continuations(mapped, sequence)
+        assert len(out_s) == 2
+        assert out_s[0]['title'] == 'A B'
+        assert out_s[1]['title'] == 'C D'
+
+    def test_is_wrap_continuation_basic(self):
+        cur_m = self._m(100, 150, page=7)
+        nxt_m = self._m(151, 200, page=7)
+        cur_s = self._seq(7)
+        nxt_s = self._seq(7)
+        assert _is_wrap_continuation(cur_m, cur_s, nxt_m, nxt_s) is True
+
+    def test_is_wrap_continuation_rejects_overlapping(self):
+        """Если nxt.start раньше cur.end — отрицательный gap, не wrap."""
+        cur_m = self._m(100, 200, page=7)
+        nxt_m = self._m(150, 250, page=7)
+        cur_s = self._seq(7)
+        nxt_s = self._seq(7)
+        assert _is_wrap_continuation(cur_m, cur_s, nxt_m, nxt_s) is False
+
+    def test_rejects_nxt_with_own_numeric_prefix(self):
+        """MIL-STD: 5.11.1.1 после 5.11.1 — это subitem, не wrap.
+        Тот же уровень в эвристике, та же страница, встык в теле — но
+        nxt начинается с собственного '5.11.1.1', поэтому не merge."""
+        cur_m = self._m(100, 150, page=7, level=3)
+        nxt_m = self._m(151, 200, page=7, level=3)
+        cur_s = {'title': '5.11.1 Stairs and ladders', 'page': 7, 'level': 3}
+        nxt_s = {'title': '5.11.1.1 General criteria', 'page': 7, 'level': 3}
+        assert _is_wrap_continuation(cur_m, cur_s, nxt_m, nxt_s) is False
+
+    def test_rejects_nxt_with_section_prefix(self):
+        """§ 1.2 после § 1.1 — тоже subitem, не wrap."""
+        cur_m = self._m(100, 150, page=7)
+        nxt_m = self._m(151, 200, page=7)
+        cur_s = {'title': '§ 1.1. Foo', 'page': 7, 'level': 2}
+        nxt_s = {'title': '§ 1.2. Bar', 'page': 7, 'level': 2}
+        assert _is_wrap_continuation(cur_m, cur_s, nxt_m, nxt_s) is False
+
+    def test_rejects_glava_prefix(self):
+        """«Глава 6» после «Глава 5» в теле подряд — отдельные главы."""
+        cur_m = self._m(100, 150, page=10, level=1)
+        nxt_m = self._m(151, 200, page=10, level=1)
+        cur_s = {'title': 'Глава 5. Заголовок', 'page': 10, 'level': 1}
+        nxt_s = {'title': 'Глава 6. Следующий', 'page': 10, 'level': 1}
+        assert _is_wrap_continuation(cur_m, cur_s, nxt_m, nxt_s) is False
+
+    def test_accepts_continuation_starting_with_lowercase(self):
+        """12_100229: «параметров логических элементов» — без префикса,
+        начинается со строчной — это wrap §1.1."""
+        cur_m = self._m(100, 150, page=7)
+        nxt_m = self._m(151, 200, page=7)
+        cur_s = {'title': '§1.1. Простейшие модели и система', 'page': 7, 'level': 2}
+        nxt_s = {'title': 'параметров логических элементов', 'page': 7, 'level': 2}
+        assert _is_wrap_continuation(cur_m, cur_s, nxt_m, nxt_s) is True
+
