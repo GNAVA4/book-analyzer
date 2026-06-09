@@ -491,11 +491,17 @@ def _looks_incomplete(seq: list, raw_text: str, ratio: float = 1.5) -> bool:
     return raw_entries > len(seq) * ratio
 
 
-async def _llm_from_text_retry(text: str, attempts: int = 3) -> list:
+async def _llm_from_text_retry(text: str, attempts: int = 5) -> list:
     """
     LLM-извлечение ToC с retry на ФОРМАЛЬНЫЕ ошибки (CJK, пустые/длинные title,
     дубли, не-монотонные страницы). Grounding тут НЕ проверяем — это дорого
     (эмбеддер), его делает финальный отбор. Возвращает лучший по формальной чистоте.
+
+    Attempts повышены с 3 до 5 (session 007) — LLM недетерминирован, и на одних
+    и тех же промптах между прогонами выдаёт заметно разные результаты (Иглмен,
+    978-5-7996, ВКР качаются tests_v5↔v6). Дополнительные две попытки в среднем
+    обходятся ~2-4 секунды на книгу с триггером, зато ловят случаи, когда LLM
+    «откинула» половину пунктов как в кейсе Клейнмана.
     """
     best: list = []
     extra = ""
