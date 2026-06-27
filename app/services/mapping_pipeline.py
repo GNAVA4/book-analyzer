@@ -587,22 +587,38 @@ async def map_sequence(
     # размещена (pos 218k < 5.1.2.3 250k — инверсия порядка), брекет верно её отверг.
     # Итог: оставлена чистая линейная оценка; bloat 5.1.2.5 принят (1 секция, на
     # real-count не влияет). Корень 5.1.2.5 — мис-матч 5.1.3, отдельная задача матчинга.
+    # Fix B (session 011): несколько page_cut-секций на ОДНОЙ странице получают
+    # одинаковую `_estimate_position_from_page(page)` → одинаковый end_idx → одинаковое
+    # окно нарезки `full_text[end_idx : next_start]` → ИДЕНТИЧНЫЙ контент (дубль,
+    # 12_100229: «Усилители-регенераторы»/«Мультиплексирование шины» p307 = один текст).
+    # Лечим разносом секций одной страницы по ширине страницы (page_width). Одна секция
+    # на странице → ровно линейная оценка (поведение v6, AI/прочие не меняются).
     if total_pages:
         page_cut = 0
-        for m in mapped:
+        page_width = full_text_len / max(total_pages, 1)
+        by_page: dict = {}
+        for idx, m in enumerate(mapped):
             if m['start_idx'] != -1:
                 continue
             page = m['item'].get('page')
             if not page:
                 continue
-            est = _estimate_position_from_page(page, total_pages, full_text_len)
-            if est <= 0:
+            by_page.setdefault(page, []).append(idx)
+        for page, idxs in by_page.items():
+            base = _estimate_position_from_page(page, total_pages, full_text_len)
+            if base <= 0:
                 continue
-            m['start_idx'] = est
-            m['end_idx'] = est  # content = full_text[est : next_start]
-            m['confidence'] = 0.30
-            m['match_strategy'] = 'page_cut'
-            page_cut += 1
+            g_count = len(idxs)
+            for g, idx in enumerate(idxs):  # idxs в ToC-порядке (idx по возрастанию)
+                # >1 секции на странице → разносим внутри ширины страницы, чтобы окна
+                # были разными. =1 → ровно базовая линейная оценка (v6).
+                est = int(base + g * page_width / g_count) if g_count > 1 else base
+                m = mapped[idx]
+                m['start_idx'] = est
+                m['end_idx'] = est  # content = full_text[est : next_start]
+                m['confidence'] = 0.30
+                m['match_strategy'] = 'page_cut'
+                page_cut += 1
         if page_cut:
             print(f"[mapping] page_cut fallback: {page_cut} sections")
 

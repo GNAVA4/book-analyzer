@@ -20,6 +20,15 @@ _Last updated: 2026-06-27 session 009_
   mis-match (page 29 lands at pos 218k before 5.1.2.3 at 250k — see
   [[insight_2026-06-27_milstd-5125-bloat-is-misplaced-neighbor]]). Separate matching-
   occurrence task if it ever matters; do NOT add more page_cut machinery for it.
+- [x] **Fix B — page_cut same-page duplication (session 011).** Stagger same-page
+  page_cut sections across page width. Corpus dups 50→4 (12_100229 28→1, MIL-STD 10→1,
+  Розенсон 5→0). 332 tests. Committed. See session_011 +
+  [[insight_2026-06-27_pagecut-dup-is-same-page-collision]].
+- [ ] **Fix A — OCR drift in body (digital-design 22% real). PROPOSED, not started.**
+  Options A1–A4 in session_011; recommended A3 (search-in-window-between-text-anchors,
+  low OCR-fuzzy threshold) then A2 (embedding localization). AWAITING USER choice.
+- [ ] **Residual page_cut dups (4)** — non-same-page mechanism (page_cut lands on an
+  exact section's content), nondeterministic. Low priority.
 - [x] **DECISION 1 (resolved): anchor-interpolation page_cut.** Verified finding:
   v7→v9 aggregate +33 real is a METRIC TRAP — it's duplicated index/bibliography blobs
   (AI: 30 sections all = identical 20385-char index blob; 12_100229: two sections =

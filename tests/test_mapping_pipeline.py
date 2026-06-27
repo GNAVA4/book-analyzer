@@ -595,6 +595,42 @@ class TestPageCutLinear:
         assert mapped[1]['start_idx'] == _estimate_position_from_page(3, 100, len(body))
         assert mapped[1]['start_idx'] < mis_pos
 
+    @pytest.mark.asyncio
+    async def test_same_page_pagecut_sections_are_staggered(self):
+        """Fix B (session 011): несколько page_cut-секций на ОДНОЙ странице не должны
+        получить идентичную позицию — иначе одинаковое окно нарезки = дубль контента."""
+        title_a = "Найденный якорный заголовок раздела"
+        title_b = "Первый отсутствующий подраздел документа"
+        title_c = "Второй отсутствующий подраздел документа"
+        body = " " * 50 + title_a + (" контент раздела " * 400)
+        seq = [
+            {'title': title_a, 'page': 1, 'level': 1},
+            {'title': title_b, 'page': 5, 'level': 2},  # page_cut, page 5
+            {'title': title_c, 'page': 5, 'level': 2},  # page_cut, ТА ЖЕ page 5
+        ]
+        mapped = await self._run(seq, body, total_pages=10)
+        assert mapped[1]['match_strategy'] == 'page_cut'
+        assert mapped[2]['match_strategy'] == 'page_cut'
+        base5 = _estimate_position_from_page(5, 10, len(body))
+        page_w = len(body) / 10
+        # первая на базовой линейной позиции, вторая разнесена вперёд в пределах страницы
+        assert mapped[1]['start_idx'] == base5
+        assert base5 < mapped[2]['start_idx'] <= base5 + page_w
+        assert mapped[1]['start_idx'] != mapped[2]['start_idx']
+
+    @pytest.mark.asyncio
+    async def test_single_pagecut_per_page_keeps_linear(self):
+        """Одна page_cut-секция на странице — ровно линейная оценка (поведение v6)."""
+        title_a = "Найденный якорный заголовок раздела"
+        title_b = "Единственный отсутствующий подраздел"
+        body = " " * 50 + title_a + (" контент раздела " * 400)
+        seq = [
+            {'title': title_a, 'page': 1, 'level': 1},
+            {'title': title_b, 'page': 5, 'level': 2},
+        ]
+        mapped = await self._run(seq, body, total_pages=10)
+        assert mapped[1]['start_idx'] == _estimate_position_from_page(5, 10, len(body))
+
 
 # ============================================================================
 # OCR-aware fuzzy locate — digital-design «прицелы»/«принципы» case

@@ -1,5 +1,16 @@
 # PROJECT CONTEXT — Book Analyzer
-_Last updated: 2026-06-27 session 009_
+_Last updated: 2026-06-27 session 011_
+
+## Session 011 — Fix B (page_cut same-page dedup) + Fix A proposed
+- Corpus quality audit (excl MIL-STD): ~12/18 books parse well. Two real problems:
+  B = page_cut duplication (~50 sections), A = OCR drift in body (digital-design 22%).
+- **Fix B shipped**: page_cut sections on the same page got identical position →
+  identical slice window → byte-identical content. Now staggered across page width
+  (single-per-page = exact v6). Corpus duplicates **50 → 4**; 12_100229 28→1, MIL-STD
+  10→1. Real-count unchanged but honest. 332 tests. Committed.
+- **Fix A proposed only** (OCR drift): recommended A3 (search between text-anchors at
+  low OCR-fuzzy threshold) → A2 (embedding localization). Awaiting user choice.
+- See session_011, [[insight_2026-06-27_pagecut-dup-is-same-page-collision]].
 
 ## Sessions 009–010 — RESOLVED: anchor-interpolation reverted to v6 linear; `chars` attr added
 - Added `chars` attribute (own-content length) to every `<section>` in `xml_builder.py`. KEPT.
