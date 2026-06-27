@@ -1,8 +1,36 @@
 # OPEN ITEMS — Book Analyzer
-_Last updated: 2026-06-10 session 007_
+_Last updated: 2026-06-27 session 009_
 
-## In progress
-_(nothing active)_
+## In progress / decision pending (session 009)
+- [x] **XML `chars` attribute** — added to every `<section>` (own-content length).
+  14/14 xml tests green. Shipped in `xml_builder.py`.
+- [x] **Full corpus → tests_v9** (bracketing-only + ordering guard) — all 19 books.
+- [x] **Ordering-guard floor cap** (session 009, `ORDERING_FLOOR_MAX_ADVANCE_PAGES=25`) —
+  shipped + verified on tests_v10. AI ch.24–27 cascade FIXED (31 dup-index sections →
+  real v6 content); MIL-STD 5.1.2.5 preserved (7999); 12_100229 dup FIXED (VHDL-AMS
+  906→35713). 68/68 tests. See session_009.
+- [x] **DECISION 2 (resolved → B): revert anchor-interpolation to v6 plain linear.**
+  Removed anchor machinery + ordering guard; page_cut = pure `_estimate_position_from_page`.
+  330 tests pass. tests_v11 verification RUNNING.
+- [x] **Local backward-anchor (session 010) — REVERTED.** tests_v12: safe but ≈0 net
+  corpus effect, and did NOT fix 5.1.2.5 (its right bound 5.1.3 is mis-placed/order-
+  inverted; bracket correctly refused it). User chose to revert → clean v6 linear +
+  `chars`. Committed. 330 tests pass.
+- [ ] **MIL-STD 5.1.2.5 bloat (61677) — ACCEPTED for now.** Real root is the 5.1.3
+  mis-match (page 29 lands at pos 218k before 5.1.2.3 at 250k — see
+  [[insight_2026-06-27_milstd-5125-bloat-is-misplaced-neighbor]]). Separate matching-
+  occurrence task if it ever matters; do NOT add more page_cut machinery for it.
+- [x] **DECISION 1 (resolved): anchor-interpolation page_cut.** Verified finding:
+  v7→v9 aggregate +33 real is a METRIC TRAP — it's duplicated index/bibliography blobs
+  (AI: 30 sections all = identical 20385-char index blob; 12_100229: two sections =
+  identical 44957-char block, "Введение в язык VHDL-AMS" 35713→906). Decisive 3-way:
+  **v6 plain linear is most correct on AI (184 real, distinct prose), both v7
+  extrapolation and v9 bracketing break it into index garbage (167/169).** Root cause
+  of v9 dup = ORDERING GUARD cascading from a single bad index match ("23.5" matched
+  exact into the index, guard floored all later sections >= it). MIL-STD 5.1.2.5 is the
+  reverse: anchor-interp helps (61677 bloat → 7999). **Removing bracketing-only alone
+  is the WRONG move** (won't fix AI, re-breaks MIL-STD). Options in
+  [[insight_2026-06-27_v6-linear-best-on-AI-ordering-guard-cascades]]. AWAITING USER.
 
 ## Done this session (was in progress)
 - [x] **VKR ToC duplicate fix** (`_drop_fuzzy_pageless_dupes`) — code applied, 12 unit tests
@@ -41,6 +69,13 @@ _(nothing active)_
   реальное покрытие).
 - [x] **MIL-STD 5.1.2.5 absorbed +61k chars** — FIXED 2026-06-10 (session 007) через
   anchor-interpolation в page_cut. 5.1.2.5: 61 677 → 33 chars. Соседи перебалансировались.
+- [-] **REGRESSION from session 007 anchor-interpolation** — на AI потеряны 17 секций
+  реального текста (19.x улетели в задний алфавитный указатель книги); на 12_100229
+  потеряны 26 (page_cut обрезал тело предыдущей exact-секции посередине слова).
+  Session 008 нашёл два механизма: extrapolation drift и ordering violation. Фиксы
+  в working tree (НЕ закоммичены): bracketing-only interpolation + ordering guard.
+  Корпусная верификация ждёт указаний пользователя. См.
+  `bug_2026-06-10_anchor-interpolation-extrapolation-into-index`.
 - [ ] **Клейнман: live 36 page_cut vs CONTEXT claim 0** — `scripts/mapping_audit.py` показывает
   одно, реальный пайплайн — другое. Разобраться где правда и обновить.
 - [x] **978-5-7996 длинные descriptive title** — Промпт сужен (session 006): rule 4

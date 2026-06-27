@@ -88,81 +88,13 @@ def _estimate_position_from_page(page: int, total_pages: int, full_text_len: int
     return int(ratio * full_text_len)
 
 
-_TRUSTED_FOR_ANCHOR = frozenset({
-    'exact', 'exact_normalized', 'tokenized_regex',
-    'page_hint_exact', 'page_hint_tokenized_regex',
-})
-
-
-def _build_page_anchors(mapped: list) -> list:
-    """Список (page, position) от уверенно смапленных секций — для интерполяции
-    page_cut.
-
-    Линейная page→position раскладка ломается на книгах, где текст распределён
-    неравномерно: многостраничный ToC в начале (MIL-STD), плотные иллюстрации
-    с малой долей текста (Клейнман), OCR-источник с дрейфом длины. Анкоры
-    приближают истинную картинку, и интерполяция между двумя ближайшими анкорами
-    даёт гораздо более точную оценку page→position, чем глобальное линейное.
-    """
-    anchors: list = []
-    for m in mapped:
-        if m.get('start_idx', -1) < 0:
-            continue
-        if m.get('match_strategy') not in _TRUSTED_FOR_ANCHOR:
-            continue
-        item = m.get('item') or {}
-        p = item.get('page')
-        if not isinstance(p, int) or p < 1:
-            continue
-        anchors.append((p, m['start_idx']))
-    anchors.sort(key=lambda a: (a[0], a[1]))
-    # Дедуп по странице (первый встретившийся анкор остаётся; защита от
-    # коллизий когда одна страница даёт несколько матчей).
-    out: list = []
-    last_page = None
-    for p, pos in anchors:
-        if p != last_page:
-            out.append((p, pos))
-            last_page = p
-    return out
-
-
-def _interpolate_position_from_page(
-    page: int,
-    total_pages: int,
-    full_text_len: int,
-    anchors: list,
-) -> int:
-    """Page→position с интерполяцией между анкорами; fallback на линейное."""
-    if not anchors or not page or page < 1:
-        return _estimate_position_from_page(page, total_pages, full_text_len)
-
-    prev_a = None
-    next_a = None
-    for ap, apos in anchors:
-        if ap == page:
-            return apos
-        if ap < page:
-            prev_a = (ap, apos)
-        else:
-            next_a = (ap, apos)
-            break
-
-    if prev_a and next_a:
-        p0, x0 = prev_a
-        p1, x1 = next_a
-        return x0 + (page - p0) * (x1 - x0) // max(p1 - p0, 1)
-    if prev_a:
-        # Экстраполяция за последний анкор пропорционально оставшимся страницам/тексту.
-        p0, x0 = prev_a
-        remaining_text = max(full_text_len - x0, 0)
-        remaining_pages = max(total_pages - p0, 1)
-        return x0 + (page - p0) * remaining_text // remaining_pages
-    if next_a:
-        # Экстраполяция до первого анкора пропорционально.
-        p1, x1 = next_a
-        return max(0, x1 - (p1 - page) * x1 // max(p1, 1))
-    return _estimate_position_from_page(page, total_pages, full_text_len)
+# NB: anchor-interpolation page_cut была попробована и удалена. ГЛОБАЛЬНАЯ версия
+# (sessions 007–009, `_build_page_anchors` / `_interpolate_position_from_page` +
+# ordering guard) отравлялась мис-размещёнными trusted-матчами и каскадно тащила
+# секции в задний указатель (AI 19.x–27.x). Узкий ЛОКАЛЬНЫЙ backward-anchor (session
+# 010) был безопасен, но на корпусе дал ≈ноль и не починил MIL-STD 5.1.2.5. Обе
+# откатились → page_cut = чистая линейная `_estimate_position_from_page`.
+# История: git show 151726e (глобальная), session_009.md / session_010.md (откаты).
 
 
 def _page_hint_search(
@@ -646,10 +578,16 @@ async def map_sequence(
     # Когда заголовок секции физически отсутствует в тексте (крупная типографика,
     # скан, декоративный шрифт — PyMuPDF не извлекает), нарезаем контент по
     # позиции страницы из ToC вместо по совпадению с заголовком.
+    # page_cut: чистая линейная оценка позиции по странице из ToC (поведение v6).
+    # Сессии 007–010 пробовали anchor-interpolation: ГЛОБАЛЬНУЮ (отравлялась мис-
+    # размещёнными trusted-матчами, каскадно тащила секции в задний указатель —
+    # AI 19.x–27.x, откат session 009) и узкий ЛОКАЛЬНЫЙ backward-anchor для тесно
+    # обрамлённых прогонов (session 010). Локальный был безопасен, но на корпусе дал
+    # ≈ноль и НЕ починил целевой MIL-STD 5.1.2.5: его правая граница 5.1.3 сама мис-
+    # размещена (pos 218k < 5.1.2.3 250k — инверсия порядка), брекет верно её отверг.
+    # Итог: оставлена чистая линейная оценка; bloat 5.1.2.5 принят (1 секция, на
+    # real-count не влияет). Корень 5.1.2.5 — мис-матч 5.1.3, отдельная задача матчинга.
     if total_pages:
-        # Анкоры собираем ДО page_cut цикла: только из уверенно смапленных
-        # секций, чтобы интерполяция не отравлялась самим page_cut'ом.
-        anchors = _build_page_anchors(mapped)
         page_cut = 0
         for m in mapped:
             if m['start_idx'] != -1:
@@ -657,9 +595,7 @@ async def map_sequence(
             page = m['item'].get('page')
             if not page:
                 continue
-            est = _interpolate_position_from_page(
-                page, total_pages, full_text_len, anchors
-            )
+            est = _estimate_position_from_page(page, total_pages, full_text_len)
             if est <= 0:
                 continue
             m['start_idx'] = est
@@ -668,8 +604,7 @@ async def map_sequence(
             m['match_strategy'] = 'page_cut'
             page_cut += 1
         if page_cut:
-            print(f"[mapping] page_cut fallback: {page_cut} sections "
-                  f"(anchors: {len(anchors)})")
+            print(f"[mapping] page_cut fallback: {page_cut} sections")
 
     return mapped
 

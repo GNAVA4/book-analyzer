@@ -1,5 +1,22 @@
 # PROJECT CONTEXT — Book Analyzer
-_Last updated: 2026-06-10 session 007_
+_Last updated: 2026-06-27 session 009_
+
+## Sessions 009–010 — RESOLVED: anchor-interpolation reverted to v6 linear; `chars` attr added
+- Added `chars` attribute (own-content length) to every `<section>` in `xml_builder.py`. KEPT.
+- Investigated anchor-interpolation page_cut (sessions 007–010) via tests_v9/v10/v11/v12 with
+  CONTENT inspection (the `real_content_sections` count is a METRIC TRAP — counts duplicated
+  index/bibliography blobs as real).
+- **Verdict: v6 plain linear page_cut is the most correct.** Global anchor-interpolation +
+  ordering guard poisoned AI ch.19–27 (mis-placed trusted match → cascade into back-matter
+  index; AI 184→169). A narrow LOCAL backward-anchor (session 010) was safe but gave ≈0 net
+  corpus effect and did NOT fix the target MIL-STD 5.1.2.5 (its right bound 5.1.3 is itself
+  mis-placed at pos 218k < 5.1.2.3 250k — order inversion; bracket correctly refused it).
+- **Decision (user): revert BOTH anchor mechanisms → clean v6 linear + `chars`. Commit.**
+  MIL-STD 5.1.2.5 bloat (61677, 1 section) ACCEPTED — doesn't hurt real-count; real root is
+  the 5.1.3 mis-match (separate matching-order task, not page_cut).
+- tests_v11 = v6 (AI fully recovered to 184, real prose). 330 tests pass.
+- Insights: [[insight_2026-06-27_v6-linear-best-on-AI-ordering-guard-cascades]],
+  [[insight_2026-06-27_milstd-5125-bloat-is-misplaced-neighbor]].
 
 ## What this project is
 PDF/DOCX/TXT book parser: extracts Table of Contents and section content into structured XML files.
@@ -34,6 +51,24 @@ Server runs via venv: `c:\book analyzer\venv\Scripts\python.exe -m uvicorn app.m
 | **1332** *(new)* | 51/61 | heuristic | **Дефект Б: 10 titles = только «1. », «2. »…** |
 | **12_100229** *(new)* | 301/328 | heuristic | **Дефект Б + дубли split-а в §-нотации** |
 | **digital-design** *(new)* | 20/105 | ocr_llm | **ToC FIXED (s6): все 105 titles с префиксами**. Body mapping ещё страдает — OCR drift в теле требует OCR-aware fuzzy |
+
+## Active work (session 008 — IN PROGRESS, NOT COMMITTED)
+- ⚠️ **Session 007 anchor-interpolation caused real content loss** on AI (17 секций
+  ушли в задний алфавитный указатель; 19.6 «Summary, Bibliographical…» имела 14 938
+  chars правильной библиографии → 27 chars обрывка индекса) и на 12_100229 (26 секций
+  обрезались посередине слова из-за ordering violation, § 1.5 «Передача сигналов»
+  313 chars → 83 chars с обрывом).
+- Два orthogonal механизма выявлены и исправлены в working tree (не закоммичены):
+  - **Bracketing-only interpolation**: `_interpolate_position_from_page` больше не
+    экстраполирует за пределами анкоров — возвращает линейную оценку. AI 19.x должны
+    восстановиться полностью.
+  - **Ordering guard**: page_cut позиция floored at `prior_end_idx`. На частичном
+    тесте: 19 of 120 clamp'ов в 12_100229, 17 of 23 в MIL-STD.
+- 67/67 unit-tests зелёные. Корпусная верификация ОЖИДАЕТ указаний пользователя.
+- См. `bug_2026-06-10_anchor-interpolation-extrapolation-into-index`,
+  `insight_2026-06-10_anchor-extrapolation-is-dangerous`,
+  `insight_2026-06-10_content-loss-is-real-not-redistribution`,
+  `session_008.md`.
 
 ## Active work (session 007 — DONE)
 - ✅ **Anchor-interpolation page_cut**: `_build_page_anchors` собирает (page, position)

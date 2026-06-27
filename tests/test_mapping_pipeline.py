@@ -12,8 +12,6 @@ from app.services.mapping_pipeline import (
     map_sequence,
     merge_wrap_continuations,
     _is_wrap_continuation,
-    _build_page_anchors,
-    _interpolate_position_from_page,
     _ocr_aware_fuzzy_locate,
     _ocr_fold,
 )
@@ -550,70 +548,52 @@ class TestMergeWrapContinuations:
 
 
 # ============================================================================
-# Anchor-interpolation для page_cut: MIL-STD 5.1.2.5 absorbed +61k chars
+# page_cut — чистая линейная оценка по странице (поведение v6).
+# Anchor-interpolation + ordering guard (sessions 007–009) удалены после
+# корпусной верификации: они отравлялись мис-размещёнными trusted-матчами и
+# каскадно тащили секции в задний алфавитный указатель (AI 19.x–27.x).
 # ============================================================================
 
-class TestPageAnchorInterpolation:
-    def test_build_anchors_filters_to_trusted_strategies(self):
-        mapped = [
-            {'item': {'page': 5}, 'start_idx': 1000, 'match_strategy': 'exact'},
-            {'item': {'page': 10}, 'start_idx': 5000, 'match_strategy': 'embedding_rescue'},
-            {'item': {'page': 15}, 'start_idx': 8000, 'match_strategy': 'tokenized_regex'},
-            {'item': {'page': 20}, 'start_idx': -1, 'match_strategy': 'page_cut'},
+class TestPageCutLinear:
+    async def _run(self, sequence, full_text, total_pages):
+        return await map_sequence(sequence, full_text, total_pages)
+
+    @pytest.mark.asyncio
+    async def test_page_cut_uses_linear_page_estimate(self):
+        """Секция без совпадения в тексте режется по линейной позиции страницы."""
+        title_a = "Уникальный найденный заголовок"
+        title_pcut = "Совсем другой раздел которого нет"
+        body = " " * 100 + title_a + " проза проза проза. " + ("ещё " * 1000)
+        seq = [
+            {'title': title_a, 'page': 1, 'level': 1},
+            {'title': title_pcut, 'page': 5, 'level': 1},  # not in body → page_cut
         ]
-        anchors = _build_page_anchors(mapped)
-        assert anchors == [(5, 1000), (15, 8000)]
+        mapped = await self._run(seq, body, total_pages=10)
+        expected = _estimate_position_from_page(5, 10, len(body))
+        assert mapped[1]['match_strategy'] == 'page_cut'
+        assert mapped[1]['start_idx'] == expected
 
-    def test_build_anchors_sorted_and_deduped(self):
-        mapped = [
-            {'item': {'page': 10}, 'start_idx': 5000, 'match_strategy': 'exact'},
-            {'item': {'page': 5}, 'start_idx': 1000, 'match_strategy': 'exact'},
-            {'item': {'page': 10}, 'start_idx': 5500, 'match_strategy': 'exact'},  # dup
+    @pytest.mark.asyncio
+    async def test_misplaced_prior_does_not_drag_page_cut(self):
+        """v6-поведение: prior-секция, ошибочно сматчившаяся далеко ВПЕРЁД (в
+        задний указатель, AI «23.5» кейс), НЕ влияет на позицию следующей
+        page_cut-секции — нет floor/guard, секция строго на своей линейной оценке.
+
+        Здесь брекет НЕ тесный (нет правой сильной границы рядом) → linear."""
+        title_mis = "Уникальный поздний заголовок раздела"
+        title_pcut = "Совсем другой раздел которого нет в тексте"
+        head = "наполнение " * 2000  # ~22000 chars
+        body = head + title_mis + " реальный текст после заголовка. " + ("ещё " * 100)
+        seq = [
+            {'title': title_mis, 'page': 2, 'level': 1},   # exact — но физически в конце
+            {'title': title_pcut, 'page': 3, 'level': 1},  # not in body → page_cut, нет next-границы
         ]
-        anchors = _build_page_anchors(mapped)
-        assert anchors == [(5, 1000), (10, 5000)]
-
-    def test_interpolation_between_anchors_is_accurate(self):
-        """MIL-STD кейс: страница 29 между анкорами 27 (pos 100K) и 30 (pos 110K).
-        Линейное (29-1)/700 × 1M = 40K — лежит в начале, в зоне ToC.
-        Интерполяция должна дать значение ~106K — между анкорами."""
-        anchors = [(27, 100_000), (30, 110_000)]
-        pos = _interpolate_position_from_page(29, total_pages=700,
-                                              full_text_len=1_000_000,
-                                              anchors=anchors)
-        # (29-27)/(30-27) * (110000 - 100000) + 100000 ≈ 106666
-        assert 106000 <= pos <= 107000
-
-    def test_exact_anchor_page_returns_anchor_position(self):
-        anchors = [(10, 5000), (20, 12000)]
-        assert _interpolate_position_from_page(10, 100, 50_000, anchors) == 5000
-        assert _interpolate_position_from_page(20, 100, 50_000, anchors) == 12000
-
-    def test_extrapolation_after_last_anchor(self):
-        anchors = [(10, 5000)]
-        pos = _interpolate_position_from_page(50, total_pages=100,
-                                              full_text_len=50_000, anchors=anchors)
-        # remaining_text=45000, remaining_pages=90
-        # pos = 5000 + (50-10)*45000/90 = 5000 + 20000 = 25000
-        assert pos == 25000
-
-    def test_extrapolation_before_first_anchor(self):
-        anchors = [(20, 10000)]
-        pos = _interpolate_position_from_page(10, total_pages=100,
-                                              full_text_len=50_000, anchors=anchors)
-        # pos = 10000 - (20-10)*10000/20 = 10000 - 5000 = 5000
-        assert pos == 5000
-
-    def test_no_anchors_falls_back_to_linear(self):
-        pos = _interpolate_position_from_page(50, total_pages=100,
-                                              full_text_len=100_000, anchors=[])
-        # (50-1)/100 * 100000 = 49000
-        assert pos == 49000
-
-    def test_invalid_page_returns_zero_via_fallback(self):
-        anchors = [(10, 5000)]
-        assert _interpolate_position_from_page(0, 100, 50_000, anchors) == 0
-        assert _interpolate_position_from_page(-5, 100, 50_000, anchors) == 0
+        mapped = await self._run(seq, body, total_pages=100)
+        mis_pos = mapped[0]['start_idx']
+        assert mis_pos > len(body) * 0.5  # prior действительно мис-размещён вперёд
+        # page_cut строго на линейной оценке своей страницы, не утащен к prior.
+        assert mapped[1]['start_idx'] == _estimate_position_from_page(3, 100, len(body))
+        assert mapped[1]['start_idx'] < mis_pos
 
 
 # ============================================================================

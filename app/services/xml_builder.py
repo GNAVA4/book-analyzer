@@ -86,14 +86,20 @@ def dict_to_xml(data: dict, toc_items: list = None) -> str:
     def create_element(node: dict) -> ET.Element:
         # Очищаем title/content от управляющих символов на финальной стадии —
         # защита от случая, когда узлы пришли не через build_tree_structure.
+        content = clean_xml_string(str(node.get('content', '')))
+        has_content = bool(content and content.strip())
+        # chars — длина собственного контента секции (без детей). Совпадает с тем,
+        # что реально попадает в <content>; 0 если контента нет. Прямо показывает
+        # потерю/перетекание контента при диффе версий корпуса.
+        char_count = len(content) if has_content else 0
         elem = ET.Element(
             "section",
             title=clean_xml_string(str(node.get('title', ''))),
             page=_fmt_page(node.get('page')),
             confidence=_fmt_conf(node.get('confidence', 1.0)),
+            chars=str(char_count),
         )
-        content = clean_xml_string(str(node.get('content', '')))
-        if content and content.strip():
+        if has_content:
             content_elem = ET.SubElement(elem, "content")
             content_elem.text = content
         for child in node.get('children', []):
