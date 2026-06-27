@@ -24,9 +24,15 @@ _Last updated: 2026-06-27 session 009_
   page_cut sections across page width. Corpus dups 50→4 (12_100229 28→1, MIL-STD 10→1,
   Розенсон 5→0). 332 tests. Committed. See session_011 +
   [[insight_2026-06-27_pagecut-dup-is-same-page-collision]].
-- [ ] **Fix A — OCR drift in body (digital-design 22% real). PROPOSED, not started.**
-  Options A1–A4 in session_011; recommended A3 (search-in-window-between-text-anchors,
-  low OCR-fuzzy threshold) then A2 (embedding localization). AWAITING USER choice.
+- [x] **Fix A — RESOLVED, but NOT OCR-drift/embedding.** Real root: body-source bug —
+  readable docs whose ToC escalated to OCR used the short ToC-OCR as full_text instead of
+  the full text layer. `_pick_body_source` compares candidates directly. digital-design
+  24→97; corpus +78 real / +79 eff; systemic (Клейнман 4→40 exact, Кениг 6→19, ВКР 2→14).
+  session_012. Committed.
+- [ ] **digital-design residual: 46 page_cut** — OCR-extracted ToC titles don't string-match
+  the text-layer body (1 truly lost, ~7 junk, 40 land in body). NEXT: fuzzy/OCR-aware match
+  for the unmatched titles, now that the real body is searchable.
+- [ ] **12_100229: 120 page_cut** — separate (heuristic, never OCR-escalated). Untouched.
 - [ ] **Residual page_cut dups (4)** — non-same-page mechanism (page_cut lands on an
   exact section's content), nondeterministic. Low priority.
 - [x] **DECISION 1 (resolved): anchor-interpolation page_cut.** Verified finding:

@@ -16,6 +16,7 @@ from .pdf_utils import (
     fast_clean_chunk,
     get_confidence_stats,
     check_document_readability,
+    detect_garbage_text,
 )
 from .llm_engine import llm_client, LLM_BOUNDARY_CONTEXT, scrub_foreign_script
 from .ocr_engine import ocr_client
@@ -38,6 +39,39 @@ _GARBAGE_NOTICE = (
     "Текст содержит артефакты плохого OCR или нечитаемый шрифт.\n"
     "OCR через glm-ocr был запущен, но не смог восстановить текст."
 )
+
+
+def _pick_body_source(text_layer: str, ocr_text: str | None) -> str:
+    """Выбирает источник текста ТЕЛА для маппинга, сравнивая кандидатов напрямую.
+
+    Два возможных источника: текстовый слой PDF (`get_all_text`) и OCR-текст.
+    Решаем по ФАКТУ извлечённого текста, а не по readability-флагу (он считается
+    по выборке страниц и может ввести в заблуждение — front-matter читаем, тело —
+    скан, и наоборот).
+
+    Правило: text-layer — это настоящее тело, ЕСЛИ он читаем (не мусор) И покрывает
+    книгу не хуже OCR по объёму. Иначе берём OCR:
+      - 0e6e53b: text-layer — битый шрифт (is_garbage) → OCR (полный OCR тела).
+      - digital-design: text-layer чистый, 1.5M ≥ 25k OCR-оглавления → text-layer.
+      - 978: text-layer чистый, 169k ≥ OCR-оглавление → text-layer.
+      - обычная читаемая книга: ocr_text=None → text-layer.
+    """
+    text_layer = text_layer or ""
+    if not ocr_text or len(ocr_text.strip()) < 100:
+        return text_layer
+    if len(text_layer.strip()) < 100:
+        return ocr_text
+    # Качество text-layer на представительной выборке (начало + середина, чтобы
+    # не судить только по front-matter).
+    if len(text_layer) <= 40_000:
+        sample = text_layer
+    else:
+        mid = len(text_layer) // 2
+        sample = text_layer[:15_000] + text_layer[mid: mid + 15_000]
+    tl_garbage = detect_garbage_text(sample).get('is_garbage', False)
+    if not tl_garbage and len(text_layer) >= len(ocr_text):
+        return text_layer
+    return ocr_text
 
 
 async def parse_pdf_neural(
@@ -133,7 +167,12 @@ async def parse_pdf_neural(
     if progress_callback:
         await progress_callback(15, "Подготовка полного текста...")
 
-    full_text = ocr_text if ocr_text else get_all_text(doc)
+    # Тело для маппинга: выбираем источник, СРАВНИВАЯ кандидатов напрямую
+    # (качество + покрытие), а не доверяя заранее-посчитанному readability-флагу.
+    # `ocr_text` из build_toc может быть лишь OCR страниц ОГЛАВЛЕНИЯ (escalation) —
+    # короткий; он не должен подменять полное читаемое тело из text-layer
+    # (digital-design: 25k оглавления vs 1.5M тела → 94 секции уезжали в page_cut).
+    full_text = _pick_body_source(get_all_text(doc), ocr_text)
     full_text = clean_footer_header(full_text)
     total_pages = len(doc)
 

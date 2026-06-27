@@ -1,5 +1,19 @@
 # PROJECT CONTEXT — Book Analyzer
-_Last updated: 2026-06-27 session 011_
+_Last updated: 2026-06-28 session 012_
+
+## Session 012 — BODY-SOURCE FIX (systemic): use full text layer, not ToC-OCR
+- Root cause found for digital-design (and more): `full_text = ocr_text if ocr_text else
+  get_all_text`. When a READABLE doc's ToC escalated to OCR, build_toc's short ToC-OCR
+  (~25k) overrode the full readable body (~1.5M) → mapping searched the ToC.
+- Fix: `_pick_body_source` — pick body by directly comparing candidates (garbage-quality +
+  coverage), not the readability flag. digital-design 24→97 real; corpus 2500→2578
+  (eff +79); dups 4→2; ZERO regressions.
+- **Count understates it — SYSTEMIC**: every OCR-escalated book improved. Клейнман 4→40
+  exact (count stayed 40, content median 2345→7216), Кениг 6→19, ВКР 2→14 (eff 13→14).
+- **Two prior diagnoses were WRONG**: "Клейнман non-linear pagination" and "Кениг
+  subsection-into-toc" were both THIS body-source bug.
+- Residual: digital-design 46 page_cut (OCR titles don't string-match text-layer body);
+  only 1 truly lost. See session_012, [[insight_2026-06-28_body-source-was-toc-ocr-not-body]].
 
 ## Session 011 — Fix B (page_cut same-page dedup) + Fix A proposed
 - Corpus quality audit (excl MIL-STD): ~12/18 books parse well. Two real problems:
