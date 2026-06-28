@@ -1,0 +1,1127 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Архитектура Book Analyzer</title>
+<style>
+:root {
+  --bg: #0f172a;
+  --panel: #1e293b;
+  --text: #e2e8f0;
+  --muted: #94a3b8;
+  --accent: #7c3aed;
+  --accent2: #4a90e2;
+  --border: #334155;
+  --code-bg: #0b1220;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+.container {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 32px 28px 96px;
+}
+h1, h2, h3, h4 { color: #f1f5f9; line-height: 1.25; }
+h1 { font-size: 2.1rem; margin-top: 0; border-bottom: 2px solid var(--accent); padding-bottom: 12px; }
+h2 { font-size: 1.55rem; margin-top: 2.4rem; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+h3 { font-size: 1.2rem; margin-top: 1.8rem; color: var(--accent2); }
+h4 { font-size: 1rem; color: var(--muted); }
+p { margin: 0.8em 0; }
+em { color: var(--muted); }
+strong { color: #f8fafc; }
+a { color: var(--accent2); text-decoration: none; }
+a:hover { text-decoration: underline; }
+hr { border: 0; border-top: 1px solid var(--border); margin: 2rem 0; }
+code {
+  font-family: "JetBrains Mono", "Fira Code", Consolas, monospace;
+  background: var(--code-bg);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 0.9em;
+  color: #fbbf24;
+}
+pre {
+  background: var(--code-bg);
+  padding: 14px 18px;
+  border-radius: 8px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+}
+pre code { background: transparent; color: #cbd5e1; padding: 0; }
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1.2rem 0;
+  background: var(--panel);
+  border-radius: 6px;
+  overflow: hidden;
+}
+th, td {
+  padding: 9px 13px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+  font-size: 0.93rem;
+}
+th { background: #283549; color: #f1f5f9; font-weight: 600; }
+tbody tr:hover { background: rgba(74, 144, 226, 0.06); }
+ul, ol { padding-left: 1.6rem; }
+li { margin: 0.3em 0; }
+blockquote {
+  margin: 1em 0;
+  padding: 0.6em 1em;
+  border-left: 4px solid var(--accent);
+  background: var(--panel);
+  color: var(--muted);
+  border-radius: 0 4px 4px 0;
+}
+pre.mermaid {
+  background: #f8fafc;
+  color: #0f172a;
+  padding: 22px;
+  border-radius: 10px;
+  border: 1px solid #cbd5e1;
+  text-align: center;
+  margin: 1.6rem 0;
+  overflow: auto;
+}
+.toc-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 18px 22px;
+  margin: 1.6rem 0 2.4rem;
+}
+.toc-card h2 { margin-top: 0; border: 0; font-size: 1.15rem; }
+.toc-card ul { margin: 0; }
+</style>
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: "default",
+    flowchart: { htmlLabels: true, curve: "basis" },
+    securityLevel: "loose",
+  });
+</script>
+</head>
+<body>
+<div class="container">
+<h1 id="book-analyzer">Архитектура Book Analyzer</h1>
+<p><em>Текущая полная архитектура системы парсинга книг.</em></p>
+<p><em>Все диаграммы — Mermaid. Рендерятся в GitHub, VSCode (с расширением Mermaid Preview), на <a href="https://mermaid.live">mermaid.live</a>, а также в сопутствующем HTML-файле.</em></p>
+<hr>
+<h2 id="1">1. Карта модулей и их зависимостей</h2>
+<pre class="mermaid">graph TD
+    subgraph HTTP_слой[&quot;HTTP/WebSocket слой&quot;]
+        API[&quot;app/api.py&lt;br/&gt;POST /upload&lt;br/&gt;WS /ws/analyze&quot;]
+        MAIN[&quot;app/main.py&lt;br/&gt;uvicorn entry&quot;]
+    end
+
+    subgraph Парсеры_форматов[&quot;Парсеры форматов&quot;]
+        FAST[&quot;pdf_parser_fast.py&lt;br/&gt;детерминированный&quot;]
+        NEURAL[&quot;pdf_parser_neural.py&lt;br/&gt;coordinator ~265 строк&quot;]
+        DOCX[&quot;docx_parser.py&quot;]
+        TXT[&quot;txt_parser.py&quot;]
+    end
+
+    subgraph Каскады[&quot;Каскады&quot;]
+        TB[&quot;toc_builder.py&lt;br/&gt;6 уровней + smart fallback&quot;]
+        MP[&quot;mapping_pipeline.py&lt;br/&gt;9 стадий&quot;]
+    end
+
+    subgraph Утилиты[&quot;Утилиты&quot;]
+        TP[&quot;toc_parser.py&lt;br/&gt;HeuristicParser&quot;]
+        UTIL[&quot;pdf_utils.py&lt;br/&gt;find_real_indices&lt;br/&gt;fast_clean_chunk&lt;br/&gt;list-context preference&quot;]
+        XB[&quot;xml_builder.py&quot;]
+    end
+
+    subgraph Валидаторы_ToC[&quot;Валидаторы ToC&quot;]
+        TV[&quot;toc_validate.py&lt;br/&gt;score / is_valid&lt;br/&gt;CJK / formal / grounding&quot;]
+        TVD[&quot;toc_validator.py&lt;br/&gt;OCR-валидация&quot;]
+    end
+
+    subgraph Адаптеры_моделей[&quot;Адаптеры моделей&quot;]
+        LLM[&quot;llm_engine.py&lt;br/&gt;+ scrub_foreign_script&lt;br/&gt;+ JSON salvage&lt;br/&gt;+ CJK retry&quot;]
+        EMB[&quot;embedding_engine.py&quot;]
+        OCR[&quot;ocr_engine.py&lt;br/&gt;+ 400 recovery&quot;]
+    end
+
+    subgraph LM_Studio[&quot;LM Studio :1234&quot;]
+        LMS_LLM[&quot;qwen2.5-7b-instruct&lt;br/&gt;ctx 8192&quot;]
+        LMS_OCR[&quot;glm-ocr&lt;br/&gt;vision&quot;]
+        LMS_EMB[&quot;text-embedding-qwen3-0.6b&quot;]
+    end
+
+    MAIN --&gt; API
+    API --&gt; FAST
+    API --&gt; NEURAL
+    API --&gt; DOCX
+    API --&gt; TXT
+
+    NEURAL --&gt; TB
+    NEURAL --&gt; MP
+    NEURAL --&gt; UTIL
+    NEURAL --&gt; LLM
+    NEURAL --&gt; OCR
+    NEURAL --&gt; TVD
+    NEURAL --&gt; XB
+
+    TB --&gt; TP
+    TB --&gt; LLM
+    TB --&gt; OCR
+    TB --&gt; TV
+
+    MP --&gt; UTIL
+    MP --&gt; LLM
+    MP --&gt; EMB
+
+    TV --&gt; EMB
+    TV --&gt; LLM
+
+    TVD --&gt; OCR
+
+    UTIL --&gt; TP
+
+    FAST --&gt; TP
+    FAST --&gt; UTIL
+    FAST --&gt; XB
+
+    TXT --&gt; XB
+    DOCX --&gt; XB
+
+    LLM -.HTTP.-&gt; LMS_LLM
+    OCR -.HTTP.-&gt; LMS_OCR
+    EMB -.HTTP.-&gt; LMS_EMB
+
+    classDef http fill:#4a90e2,stroke:#2563eb,color:#fff
+    classDef format fill:#0891b2,stroke:#0e7490,color:#fff
+    classDef cascade fill:#7c3aed,stroke:#5b21b6,color:#fff
+    classDef util fill:#16a34a,stroke:#15803d,color:#fff
+    classDef validator fill:#a855f7,stroke:#7e22ce,color:#fff
+    classDef adapter fill:#f59e0b,stroke:#d97706,color:#000
+    classDef external fill:#dc2626,stroke:#991b1b,color:#fff
+
+    class API,MAIN http
+    class FAST,NEURAL,DOCX,TXT format
+    class TB,MP cascade
+    class TP,UTIL,XB util
+    class TV,TVD validator
+    class LLM,EMB,OCR adapter
+    class LMS_LLM,LMS_OCR,LMS_EMB external</pre>
+<p><strong>Логическое разделение по слоям</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Слой</th>
+<th>Модули</th>
+<th>Ответственность</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>HTTP</strong></td>
+<td><code>api.py</code>, <code>main.py</code></td>
+<td>Приём файлов, WebSocket-прогресс, отдача XML</td>
+</tr>
+<tr>
+<td><strong>Парсеры форматов</strong></td>
+<td><code>pdf_parser_*</code>, <code>docx_parser</code>, <code>txt_parser</code></td>
+<td>Entry-point для каждого формата</td>
+</tr>
+<tr>
+<td><strong>Каскады</strong></td>
+<td><code>toc_builder</code>, <code>mapping_pipeline</code></td>
+<td>Отказоустойчивая многоуровневая логика</td>
+</tr>
+<tr>
+<td><strong>Валидаторы</strong></td>
+<td><code>toc_validate</code>, <code>toc_validator</code></td>
+<td>Качественные гейты для LLM-источников</td>
+</tr>
+<tr>
+<td><strong>Адаптеры</strong></td>
+<td><code>llm_engine</code>, <code>embedding_engine</code>, <code>ocr_engine</code></td>
+<td>Изоляция от деталей LM Studio API</td>
+</tr>
+<tr>
+<td><strong>Утилиты</strong></td>
+<td><code>pdf_utils</code>, <code>toc_parser</code>, <code>xml_builder</code></td>
+<td>Переиспользуемые блоки</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="2-flow-xml">2. Высокоуровневый flow — от загрузки до XML</h2>
+<pre class="mermaid">flowchart TD
+    USER([Пользователь]) --&gt;|Browse + Upload| HTTP_UPLOAD[&quot;POST /upload&lt;br/&gt;app/api.py:upload_file&quot;]
+    HTTP_UPLOAD --&gt;|temp_id| WS_OPEN[&quot;WebSocket /ws/analyze&lt;br/&gt;app/api.py:analyze&quot;]
+
+    WS_OPEN --&gt; MODE{Какой&lt;br/&gt;режим?&lt;br/&gt;flags из клиента}
+
+    MODE --&gt;|fast=true| FAST_BRANCH{Формат?}
+    MODE --&gt;|neural&lt;br/&gt;деф. по умолчанию| NEURAL[&quot;parse_pdf_neural&lt;br/&gt;pdf_parser_neural.py&quot;]
+
+    FAST_BRANCH --&gt;|PDF| FAST_PDF[&quot;parse_pdf_fast&lt;br/&gt;pdf_parser_fast.py&quot;]
+    FAST_BRANCH --&gt;|DOCX| DOCX_P[&quot;parse_docx&lt;br/&gt;docx_parser.py&quot;]
+    FAST_BRANCH --&gt;|TXT| TXT_P[&quot;parse_txt&lt;br/&gt;txt_parser.py&quot;]
+
+    FAST_PDF --&gt; BUILD_TREE
+    DOCX_P --&gt; BUILD_TREE
+    TXT_P --&gt; BUILD_TREE
+    NEURAL --&gt; BUILD_TREE[&quot;build_tree_structure&lt;br/&gt;+ dict_to_xml&lt;br/&gt;xml_builder.py&quot;]
+
+    BUILD_TREE --&gt; WS_SEND[WS sends complete&lt;br/&gt;с xml + stats + meta]
+    WS_SEND --&gt; XML_RESULT([XML возвращается клиенту])
+
+    classDef api fill:#4a90e2,stroke:#2563eb,color:#fff
+    classDef neural fill:#7c3aed,stroke:#5b21b6,color:#fff
+    classDef algo fill:#16a34a,stroke:#15803d,color:#fff
+    classDef io fill:#f59e0b,stroke:#d97706,color:#fff
+
+    class HTTP_UPLOAD,WS_OPEN,WS_SEND api
+    class NEURAL neural
+    class FAST_PDF,DOCX_P,TXT_P,BUILD_TREE algo
+    class USER,XML_RESULT io</pre>
+<p><strong>Точки выбора</strong>:
+- <strong>Fast-режим</strong> — детерминированный, без LLM/OCR/embed. Секунды на любую книгу. Используется как baseline.
+- <strong>Neural-режим</strong> — каскад с возможным OCR и LLM. Минуты на сложные книги.</p>
+<p>Клиент видит прогресс через WebSocket: pipeline шлёт <code>{type: "progress", pct, message}</code> на каждой стадии, и <code>{type: "complete", xml, stats}</code> в конце.</p>
+<hr>
+<h2 id="3-neural-pipeline">3. Neural pipeline целиком</h2>
+<pre class="mermaid">flowchart TD
+    NIN([parse_pdf_neural&lt;br/&gt;file_path, flags]) --&gt; READ[&quot;check_document_readability&lt;br/&gt;pdf_utils.py&quot;]
+
+    READ --&gt;|is_readable=True| TOC_STAGE
+    READ --&gt;|is_readable=False| OCR_CHECK{use_ocr=True&lt;br/&gt;+ OCR доступен?}
+
+    OCR_CHECK --&gt;|Да| OCR_DOC[&quot;ocr_client.ocr_document&lt;br/&gt;glm-ocr через LM Studio&lt;br/&gt;ocr_engine.py&quot;]
+    OCR_CHECK --&gt;|Нет| ERR_NODE[Возврат узла&lt;br/&gt;«Документ нечитаем»]
+
+    OCR_DOC --&gt;|ocr_text есть| TOC_STAGE[/&quot;build_toc&lt;br/&gt;см. диаграмму ToC Builder ниже&quot;/]
+    OCR_DOC --&gt;|пусто| ERR_NODE
+
+    TOC_STAGE --&gt;|sequence, toc_source, ocr_text| VALID_TOC{validate_toc_ocr=True&lt;br/&gt;+ source!=ocr_*?}
+
+    VALID_TOC --&gt;|Да| VALIDATE_OCR[&quot;validate_toc_via_ocr&lt;br/&gt;toc_validator.py&quot;]
+    VALID_TOC --&gt;|Нет| FULL_TEXT
+    VALIDATE_OCR --&gt; FULL_TEXT[&quot;clean_footer_header&lt;br/&gt;от колонтитулов&lt;br/&gt;pdf_utils.py&quot;]
+
+    FULL_TEXT --&gt; MAP_STAGE[/&quot;map_sequence&lt;br/&gt;см. диаграмму Mapping ниже&quot;/]
+
+    MAP_STAGE --&gt;|mapped| SLICE_LOOP{Для каждой&lt;br/&gt;секции:&lt;br/&gt;нарезка контента}
+
+    SLICE_LOOP --&gt; SLICE[content = full_text&lt;br/&gt;от end_idx до&lt;br/&gt;min start_idx следующих]
+
+    SLICE --&gt; CONF_CHECK{confidence&lt;br/&gt;≥ 0.85?}
+
+    CONF_CHECK --&gt;|Да| FAST_CLEAN[&quot;fast_clean_chunk&lt;br/&gt;алгоритм&lt;br/&gt;pdf_utils.py&quot;]
+    CONF_CHECK --&gt;|Нет| LLM_BOUNDARY[&quot;fix_chapter_boundary&lt;br/&gt;llm_engine.py&quot;]
+
+    LLM_BOUNDARY --&gt; LLM_CLEAN[&quot;process_large_text&lt;br/&gt;asyncio.gather параллельно&lt;br/&gt;llm_engine.py&quot;]
+
+    FAST_CLEAN --&gt; SCRUB
+    LLM_CLEAN --&gt; SCRUB[scrub_foreign_script&lt;br/&gt;title + content&lt;br/&gt;на ВСЕХ путях]
+
+    SCRUB --&gt; NEXT_SEC{Ещё секции?}
+    NEXT_SEC --&gt;|Да| SLICE_LOOP
+    NEXT_SEC --&gt;|Нет| XML_BUILD[&quot;build_tree_structure&lt;br/&gt;dict_to_xml&lt;br/&gt;xml_builder.py&quot;]
+
+    ERR_NODE --&gt; XML_BUILD
+    XML_BUILD --&gt; RETURN([flat_nodes, sequence, meta])
+
+    classDef stage fill:#4a90e2,stroke:#2563eb,color:#fff
+    classDef llm fill:#7c3aed,stroke:#5b21b6,color:#fff
+    classDef ocr fill:#dc2626,stroke:#991b1b,color:#fff
+    classDef algo fill:#16a34a,stroke:#15803d,color:#fff
+    classDef guard fill:#a855f7,stroke:#7e22ce,color:#fff
+    classDef err fill:#f59e0b,stroke:#d97706,color:#fff
+
+    class READ,FULL_TEXT,SLICE,FAST_CLEAN algo
+    class OCR_DOC,VALIDATE_OCR ocr
+    class LLM_BOUNDARY,LLM_CLEAN llm
+    class TOC_STAGE,MAP_STAGE stage
+    class SCRUB guard
+    class ERR_NODE err</pre>
+<p><strong>Ключевые архитектурные правила</strong>:</p>
+<ul>
+<li><code>scrub_foreign_script</code> <strong>всегда последняя</strong> — применяется к title+content каждого узла независимо от пути. <strong>Никогда</strong> не переносить внутрь <code>fast_clean_chunk</code> — там она не сработает для fast-path.</li>
+<li><code>CONFIDENCE_THRESHOLD=0.85</code> — фиксированная граница между algo и LLM clean (ADR 001).</li>
+<li>LLM clean — <strong>параллельный</strong> через <code>asyncio.gather</code>. Не утверждать sequential.</li>
+</ul>
+<hr>
+<h2 id="4-toc-builder-6-smart-fallback">4. ToC Builder — каскад из 6 уровней + smart fallback с валидацией</h2>
+<p><code>toc_builder.build_toc()</code> — главная функция извлечения оглавления.</p>
+<pre class="mermaid">flowchart TD
+    BTI([build_toc&lt;br/&gt;doc, full_text_extractor,&lt;br/&gt;ocr_text, flags]) --&gt; OCR_PROVIDED{ocr_text&lt;br/&gt;уже передан&lt;br/&gt;извне?}
+
+    OCR_PROVIDED --&gt;|Да&lt;br/&gt;readability=False| OCR_HEUR[&quot;Уровень 3 ускоренно:&lt;br/&gt;HeuristicParser&lt;br/&gt;по split_sticky OCR-тексту&quot;]
+    OCR_HEUR --&gt; OCR_LEN{len ≥ TOC_MIN_USEFUL=5?}
+    OCR_LEN --&gt;|Да| OUT_OCRH[&quot;return seq,&lt;br/&gt;&#x27;ocr_heuristic&#x27;&quot;]
+    OCR_LEN --&gt;|Нет| OCR_LLM[&quot;Уровень 4:&lt;br/&gt;llm.extract_toc_json&lt;br/&gt;по OCR-тексту&quot;]
+    OCR_LLM --&gt; OUT_OCRL[&quot;return seq,&lt;br/&gt;&#x27;ocr_llm&#x27;&quot;]
+
+    OCR_PROVIDED --&gt;|Нет| RAW_TEXT[&quot;Извлечь raw_text&lt;br/&gt;doc первых 20 страниц&quot;]
+    RAW_TEXT --&gt; SPLIT[&quot;_split_sticky_toc_lines&lt;br/&gt;разбить склейки&quot;]
+    SPLIT --&gt; LVL1[&quot;Уровень 1:&lt;br/&gt;HeuristicParser.parse_toc&quot;]
+    LVL1 --&gt; EARLY_GATE{len ≥ 12&lt;br/&gt;и не high-level-only&lt;br/&gt;и не _looks_incomplete?}
+
+    EARLY_GATE --&gt;|Да| DEDUP_FAST[_dedup_and_order]
+    DEDUP_FAST --&gt; OUT_HEUR[&quot;return seq,&lt;br/&gt;&#x27;heuristic&#x27;&quot;]
+
+    EARLY_GATE --&gt;|Нет&lt;br/&gt;SMART FALLBACK| COLLECT[Кандидаты:&lt;br/&gt;heuristic как baseline]
+
+    COLLECT --&gt; LVL2[&quot;Уровень 2:&lt;br/&gt;_llm_from_text_retry&lt;br/&gt;с retry на CJK / формальные&lt;br/&gt;ошибки / too-few-items&quot;]
+    LVL2 --&gt; ADD2[candidates += llm]
+
+    ADD2 --&gt; SELECT1[&quot;_select_best&lt;br/&gt;среди heuristic + llm&quot;]
+    SELECT1 --&gt; NEED_ESC{Лучший&lt;br/&gt;не валиден ИЛИ&lt;br/&gt;_looks_incomplete?}
+
+    NEED_ESC --&gt;|Да + use_ocr| LVL3[&quot;Уровень 3:&lt;br/&gt;OCR первых 30 страниц&lt;br/&gt;+ HeuristicParser&quot;]
+    LVL3 --&gt; ADD3[candidates += ocr_heuristic]
+    ADD3 --&gt; LVL4[&quot;Уровень 4:&lt;br/&gt;OCR-text + LLM extract&quot;]
+    LVL4 --&gt; ADD4[candidates += ocr_llm]
+    ADD4 --&gt; SELECT2[_select_best]
+
+    NEED_ESC --&gt;|Нет| SELECT2
+    SELECT2 --&gt; DEEP_CHECK{enable_deep_scan&lt;br/&gt;+ len ≤ 5?}
+
+    DEEP_CHECK --&gt;|Да| LVL5[&quot;Уровень 5:&lt;br/&gt;propose_structure_from_text&lt;br/&gt;LLM по chunks полного текста&lt;br/&gt;МЕДЛЕННО&quot;]
+    LVL5 --&gt; ADD5[candidates += deep_scan]
+    ADD5 --&gt; SELECT3[_select_best]
+    DEEP_CHECK --&gt;|Нет| SELECT3
+
+    SELECT3 --&gt; EXP_CHECK{enable_llm_expand&lt;br/&gt;+ high-level-only?}
+    EXP_CHECK --&gt;|Да| LVL6[&quot;Уровень 6:&lt;br/&gt;_llm_expand_parts&lt;br/&gt;LLM ищет главы&lt;br/&gt;внутри ЧАСТЕЙ&quot;]
+    LVL6 --&gt; RET([return sequence, source, ocr_text])
+    EXP_CHECK --&gt;|Нет| RET
+
+    OUT_OCRH --&gt; RET
+    OUT_OCRL --&gt; RET
+    OUT_HEUR --&gt; RET
+
+    classDef algo fill:#16a34a,stroke:#15803d,color:#fff
+    classDef llm fill:#7c3aed,stroke:#5b21b6,color:#fff
+    classDef ocr fill:#dc2626,stroke:#991b1b,color:#fff
+    classDef select fill:#a855f7,stroke:#7e22ce,color:#fff
+
+    class LVL1,LVL3,SPLIT,DEDUP_FAST,RAW_TEXT,OCR_HEUR algo
+    class LVL2,LVL4,LVL5,LVL6,OCR_LLM llm
+    class SELECT1,SELECT2,SELECT3 select</pre>
+<p><strong>Уровни каскада</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Уровень</th>
+<th>Метод</th>
+<th>Стоимость</th>
+<th>Когда срабатывает</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>1</strong></td>
+<td>HeuristicParser по PyMuPDF first 20 pages</td>
+<td>Мгновенно</td>
+<td>Всегда первый шаг</td>
+</tr>
+<tr>
+<td><strong>Early exit</strong></td>
+<td><code>_dedup_and_order</code> и возврат</td>
+<td>Мгновенно</td>
+<td>Heuristic ≥ 12 + не high-level + не <code>_looks_incomplete</code></td>
+</tr>
+<tr>
+<td><strong>2</strong></td>
+<td>LLM <code>extract_toc_json</code> с retry</td>
+<td>Секунды</td>
+<td>Если early gate не сработал</td>
+</tr>
+<tr>
+<td><strong>3</strong></td>
+<td>OCR первых 30 стр + HeuristicParser</td>
+<td>1–3 мин</td>
+<td>Если best ещё не валиден или неполный</td>
+</tr>
+<tr>
+<td><strong>4</strong></td>
+<td>OCR-text + LLM <code>extract_toc_json</code></td>
+<td>Минуты</td>
+<td>Если OCR-heuristic не помог</td>
+</tr>
+<tr>
+<td><strong>5</strong></td>
+<td>Deep-scan по chunks полного текста</td>
+<td>10+ мин</td>
+<td>Только при <code>enable_deep_scan=True</code> И всё ещё ≤ 5 пунктов</td>
+</tr>
+<tr>
+<td><strong>6</strong></td>
+<td>LLM-expand: главы внутри ЧАСТЕЙ</td>
+<td>Секунды–минуты</td>
+<td>Если ToC верхнеуровневый</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Триггер <code>_looks_incomplete</code></strong> — алгоритмический, без моделей:</p>
+<pre><code>raw_entries = _count_toc_entry_lines(raw_text)
+if raw_entries &gt; len(seq) * 1.5:
+    return True  # heuristic неполна → fallback
+</code></pre>
+<p>Розенсон: 4.14 → fallback. Клейнман: 1.76 → fallback. Виды UI: 1.0 → не трогаем.
+<strong>Caveat</strong>: на ВКР raw_entries=33, heuristic корректно=14, ratio 2.36 → over-trigger; ~170 сек тратятся впустую.</p>
+<h3 id="41-_select_best">4.1. Селекция <code>_select_best</code></h3>
+<pre class="mermaid">flowchart TD
+    SBS([_select_best&lt;br/&gt;candidates, full_text, raw_count]) --&gt; SCORE[Для каждого кандидата:&lt;br/&gt;score_toc]
+
+    SCORE --&gt; METRICS[&quot;Возвращает score:&lt;br/&gt;n_total, n_grounded,&lt;br/&gt;n_cjk, n_formal_errors,&lt;br/&gt;n_missing_pages&quot;]
+
+    METRICS --&gt; VALID_FILTER[Фильтр валидных:&lt;br/&gt;is_valid score?]
+
+    VALID_FILTER --&gt;|Найдены валидные| POOL_V[pool = valid only]
+    VALID_FILTER --&gt;|Нет валидных| POOL_ALL[pool = все]
+
+    POOL_V --&gt; BEST_KEY
+    POOL_ALL --&gt; BEST_KEY[Выбор по&lt;br/&gt;n_grounded &gt; n_total]
+    BEST_KEY --&gt; RET_BEST([return src, seq, score])
+
+    classDef metric fill:#0891b2,stroke:#0e7490,color:#fff
+    classDef select fill:#a855f7,stroke:#7e22ce,color:#fff
+    class SCORE,METRICS metric
+    class VALID_FILTER,BEST_KEY select</pre>
+<p><strong><code>is_valid</code> = formal_ok AND no_CJK AND grounding ≥ 0.8</strong> (<code>GROUNDING_MIN</code>).</p>
+<ul>
+<li><strong>formal_ok</strong>: нет дублей, нет overlong title, монотонные страницы (allow one «reset» — для дв.оглавления).</li>
+<li><strong>no_CJK</strong>: ни один title не содержит CJK / арабских / корейских символов.</li>
+<li><strong>grounding</strong>: доля title-ов, реально встречающихся в тексте книги. Lexical-first (значимые токены в тексте), embedder только для не-lexical, cap = 20 (GPU cost).</li>
+</ul>
+<p><strong>Никогда не отдаём невалидированный LLM-вывод</strong> — это политика, ADR 003.</p>
+<h3 id="42-_dedup_and_order-fuzzy-pageless">4.2. Финальный <code>_dedup_and_order</code> с fuzzy-pageless защитой</h3>
+<pre class="mermaid">flowchart TD
+    DI([_dedup_and_order&lt;br/&gt;sequence]) --&gt; NORM[_norm: lowercase&lt;br/&gt;+ collapse whitespace]
+
+    NORM --&gt; LOOP1[Для каждого item:&lt;br/&gt;группировка по&lt;br/&gt;нормализованному title]
+
+    LOOP1 --&gt; SAME_KEY{Дубликат&lt;br/&gt;по key?}
+
+    SAME_KEY --&gt;|Да| MERGE_BEST[Выбор лучшего:&lt;br/&gt;с page &gt; без&lt;br/&gt;больший level &gt; меньший]
+    SAME_KEY --&gt;|Нет| ADD_NEW[Добавить в order]
+
+    MERGE_BEST --&gt; NEXT1{Ещё items?}
+    ADD_NEW --&gt; NEXT1
+    NEXT1 --&gt;|Да| LOOP1
+    NEXT1 --&gt;|Нет| FUZZY_PASS[_drop_fuzzy_pageless_dupes]
+
+    FUZZY_PASS --&gt; LOOP2[Для каждого page-less item:&lt;br/&gt;SequenceMatcher ratio&lt;br/&gt;против каждого paged item]
+
+    LOOP2 --&gt; RATIO{ratio ≥ 0.88&lt;br/&gt;+ len ≥ 8?}
+
+    RATIO --&gt;|Да| DROP[Дроп page-less]
+    RATIO --&gt;|Нет| KEEP[Оставить]
+
+    DROP --&gt; NEXT2{Ещё?}
+    KEEP --&gt; NEXT2
+    NEXT2 --&gt;|Да| LOOP2
+    NEXT2 --&gt;|Нет| SORT_CHECK{has_pages /&lt;br/&gt;total &gt; 0.7?}
+
+    SORT_CHECK --&gt;|Да| SORT[Стабильная сортировка&lt;br/&gt;по page&lt;br/&gt;None в конец]
+    SORT_CHECK --&gt;|Нет| RET_DEDUP
+
+    SORT --&gt; RET_DEDUP([return deduped])
+
+    classDef proc fill:#16a34a,stroke:#15803d,color:#fff
+    classDef fuzzy fill:#0891b2,stroke:#0e7490,color:#fff
+    classDef action fill:#f59e0b,stroke:#d97706,color:#000
+
+    class NORM,LOOP1,LOOP2,SORT proc
+    class FUZZY_PASS,RATIO fuzzy
+    class DROP,KEEP,ADD_NEW,MERGE_BEST action</pre>
+<p><strong>Fuzzy-pageless</strong> — отдельный второй проход. Цель: ловить OCR-drift варианты того же заголовка («ИЗУЧЕНЯЯ» в одном OCR-проходе vs «ИЗУЧЕНЯЮ» в другом — defeated exact-norm dedup). Threshold 0.88 калиброван: реальные 80+ символьные заголовки разных глав не достигают этого sim. Гард <code>len &lt; 8</code> защищает от ложных срабатываний на коротких title.</p>
+<hr>
+<h2 id="5-mapping-pipeline-9">5. Mapping Pipeline — 9 стадий</h2>
+<p><code>mapping_pipeline.map_sequence()</code> — главная функция мапинга секций в текст.</p>
+<pre class="mermaid">flowchart TD
+    MIN([map_sequence&lt;br/&gt;sequence, full_text, total_pages]) --&gt; L1[&quot;Стадия 1: find_real_indices&lt;br/&gt;4 regex стратегии&lt;br/&gt;pdf_utils.py&quot;]
+
+    L1 --&gt; L1_STRAT[exact / tokenized_regex /&lt;br/&gt;partial_words / num_prefix&lt;br/&gt;с current_pos cascade]
+    L1_STRAT --&gt; L2[&quot;Стадия 2: РАННИЙ verify&lt;br/&gt;_verify_and_correct_order&quot;]
+
+    L2 --&gt; L2_CHK1[Проверка 1:&lt;br/&gt;_looks_like_toc_content&lt;br/&gt;50%+ строк = leader-dot ToC]
+    L2 --&gt; L2_CHK2[Проверка 2:&lt;br/&gt;out-of-order rescue&lt;br/&gt;+ page-distance backup]
+
+    L2_CHK1 --&gt; L3
+    L2_CHK2 --&gt; L3{Есть&lt;br/&gt;not_found?}
+
+    L3 --&gt;|Нет| FINAL_VERIFY
+    L3 --&gt;|Да| L3_LOOP[Для каждой&lt;br/&gt;не найденной]
+
+    L3_LOOP --&gt; L4[&quot;Стадия 3: page_hint_search&lt;br/&gt;окно ±5000 chars&lt;br/&gt;от ожидаемой по странице&quot;]
+    L4 --&gt;|Найдено| MARK_PH[mark page_hint_rescue&lt;br/&gt;conf 0.50–0.85]
+    L4 --&gt;|Нет| L5
+
+    L5[&quot;Стадия 4: _fuzzy_locate&lt;br/&gt;difflib.SequenceMatcher&lt;br/&gt;FUZZY_THRESHOLD=0.85&quot;]
+    L5 --&gt;|Найдено| MARK_F[mark fuzzy_rescue&lt;br/&gt;conf ~0.70]
+    L5 --&gt;|Нет| L6
+
+    L6[&quot;Стадия 5: embedding_rescue&lt;br/&gt;embedding_client.locate_section&lt;br/&gt;cosine similarity&quot;]
+    L6 --&gt;|score ≥ 0.65| MARK_E[mark embedding_rescue&lt;br/&gt;conf = score]
+    L6 --&gt;|Нет| L7
+
+    L7[&quot;Стадия 6: llm_rescue&lt;br/&gt;llm_client.locate_section_in_text&lt;br/&gt;LLM возвращает offset&quot;]
+    L7 --&gt;|offset ≥ 0| MARK_L[mark llm_rescue&lt;br/&gt;conf = 0.55]
+    L7 --&gt;|Нет| MARK_NF[остаётся not_found]
+
+    MARK_PH --&gt; NEXT_NF
+    MARK_F --&gt; NEXT_NF
+    MARK_E --&gt; NEXT_NF
+    MARK_L --&gt; NEXT_NF
+    MARK_NF --&gt; NEXT_NF{Ещё&lt;br/&gt;not_found?}
+    NEXT_NF --&gt;|Да| L3_LOOP
+    NEXT_NF --&gt;|Нет| FINAL_VERIFY
+
+    FINAL_VERIFY[&quot;Стадия 7: финальный verify&lt;br/&gt;out-of-order check&lt;br/&gt;после rescue&quot;]
+    FINAL_VERIFY --&gt; FIX_A[&quot;Стадия 8: _restored_after_rescue_fail&lt;br/&gt;Class-2 Fix A:&lt;br/&gt;если есть page → defer page_cut&quot;]
+    FIX_A --&gt; FIX_B[&quot;Стадия 9: _revert_position_clusters&lt;br/&gt;Class-2 Fix B:&lt;br/&gt;crammed back-matter кластеры&lt;br/&gt;≥3 секций в ≤4K при page spread ≥15K&quot;]
+    FIX_B --&gt; PAGE_CUT[&quot;Финал: page_cut fallback&lt;br/&gt;для всех not_found&lt;br/&gt;с известной страницей&lt;br/&gt;(page-1)/total × text_len&quot;]
+
+    PAGE_CUT --&gt; RETURN([return mapped&lt;br/&gt;start_idx, end_idx, conf, strategy])
+
+    classDef algo fill:#16a34a,stroke:#15803d,color:#fff
+    classDef embed fill:#0891b2,stroke:#0e7490,color:#fff
+    classDef llm fill:#7c3aed,stroke:#5b21b6,color:#fff
+    classDef verify fill:#dc2626,stroke:#991b1b,color:#fff
+    classDef class2 fill:#a855f7,stroke:#7e22ce,color:#fff
+    classDef pcut fill:#f59e0b,stroke:#d97706,color:#000
+
+    class L1,L1_STRAT,L4,L5 algo
+    class L6 embed
+    class L7 llm
+    class L2,L2_CHK1,L2_CHK2,FINAL_VERIFY verify
+    class FIX_A,FIX_B class2
+    class PAGE_CUT pcut</pre>
+<p><strong>Особенности</strong>:</p>
+<ul>
+<li><strong>Раннее verify (стадия 2)</strong> — критично. Без него секции, «найденные» ВНУТРИ ToC-страниц (Release It! 21/36), остаются с conf=1.0 и не доходят до rescue.</li>
+<li><strong>Embeddings ставятся ДО LLM</strong> — они быстрее и бесплатнее.</li>
+<li><strong>page_cut — последний шаг</strong>. Применяется только к not_found с известной страницей. Подставляет approximate position по линейной пагинации. Confidence=0.30.</li>
+</ul>
+<h3 id="51-verification">5.1. Verification — что именно проверяется</h3>
+<p><code>mapping_pipeline._verify_and_correct_order()</code>:</p>
+<pre class="mermaid">flowchart TD
+    VIN([&quot;_verify_and_correct_order&quot;]) --&gt; CHK1[&quot;Проверка 1: контент это сам ToC&quot;]
+
+    CHK1 --&gt; LOOP1{&quot;Для каждой&lt;br/&gt;найденной&quot;}
+    LOOP1 --&gt; PREVIEW[&quot;full_text от end_idx&lt;br/&gt;+ 800 chars&lt;br/&gt;фиксированное окно&quot;]
+    PREVIEW --&gt; TOC_LIKE{&quot;_looks_like_toc_content&lt;br/&gt;больше 50 процентов строк&lt;br/&gt;как &#x27;текст ..... номер&#x27;?&quot;}
+
+    TOC_LIKE -- Да --&gt; MARK1[&quot;mark reverted_in_toc&lt;br/&gt;start_idx = -1&quot;]
+    TOC_LIKE -- Нет --&gt; KEEP1[&quot;оставить&quot;]
+
+    MARK1 --&gt; CHK2
+    KEEP1 --&gt; CHK2
+
+    CHK2[&quot;Проверка 2: порядок секций&quot;] --&gt; LOOP2{&quot;Для каждой&lt;br/&gt;оставшейся&quot;}
+    LOOP2 --&gt; RUN_MAX{&quot;start_idx меньше&lt;br/&gt;running_max минус 1000&lt;br/&gt;и strategy = rescue?&quot;}
+
+    RUN_MAX -- Да --&gt; MARK2[&quot;mark reverted_out_of_order&lt;br/&gt;start_idx = -1&quot;]
+    RUN_MAX -- Нет --&gt; PD_CHK[&quot;Page-distance check&quot;]
+
+    PD_CHK --&gt; FAR{&quot;abs start минус page_est&lt;br/&gt;больше 30 процентов от text_len?&quot;}
+    FAR -- Да --&gt; BACKUP[&quot;backup в restore-store&lt;br/&gt;start_idx = -1&quot;]
+    FAR -- Нет --&gt; UPDATE[&quot;running_max = max start&quot;]
+
+    BACKUP --&gt; VOUT
+    UPDATE --&gt; VOUT
+    MARK2 --&gt; VOUT([&quot;return mapped&quot;])
+
+    classDef verify fill:#dc2626,stroke:#991b1b,color:#fff
+    classDef action fill:#f59e0b,stroke:#d97706,color:#000
+
+    class CHK1,CHK2,TOC_LIKE,RUN_MAX,FAR verify
+    class MARK1,MARK2,BACKUP action</pre>
+<p>Run TWICE: до и после rescue. Раннее ловит in-ToC и far page-distance матчи. Финальное — out-of-order среди rescue-результатов.</p>
+<h3 id="52-class-2-fix-a-_restored_after_rescue_fail">5.2. Class-2 Fix A: <code>_restored_after_rescue_fail</code></h3>
+<pre class="mermaid">flowchart TD
+    A_IN([_restored_after_rescue_fail&lt;br/&gt;mapped, sequence]) --&gt; LOOP[Для каждой&lt;br/&gt;section из backup-store]
+    LOOP --&gt; CHK_RESCUE{rescue нашло&lt;br/&gt;лучший вариант?}
+    CHK_RESCUE --&gt;|Да| SKIP[Пропустить —&lt;br/&gt;rescue победил]
+    CHK_RESCUE --&gt;|Нет| HAS_PAGE{Есть&lt;br/&gt;section.page?}
+
+    HAS_PAGE --&gt;|Нет| RESTORE[Восстановить&lt;br/&gt;backup&#x27;нутую позицию&lt;br/&gt;conf × 0.7&lt;br/&gt;strategy = restored]
+    HAS_PAGE --&gt;|Да| DEFER[НЕ восстанавливать —&lt;br/&gt;оставить not_found&lt;br/&gt;page_cut положит&lt;br/&gt;по странице]
+
+    RESTORE --&gt; NEXT
+    SKIP --&gt; NEXT
+    DEFER --&gt; NEXT{Ещё?}
+    NEXT --&gt;|Да| LOOP
+    NEXT --&gt;|Нет| RETA([return mapped])
+
+    classDef class2 fill:#a855f7,stroke:#7e22ce,color:#fff
+    classDef action fill:#f59e0b,stroke:#d97706,color:#000
+    class HAS_PAGE,CHK_RESCUE class2
+    class RESTORE,DEFER,SKIP action</pre>
+<p><strong>Логика</strong>: дальний page-distance match почти всегда ложен (нашёл в Index/Appendix). Если у секции <strong>есть</strong> страница — отдать page_cut, иначе восстановить (page_cut бессилен). До s4 всегда восстанавливали → возвращали ложные срабатывания (Do Good copyright, Главы 1/3/5/7).</p>
+<h3 id="53-class-2-fix-b-_revert_position_clusters">5.3. Class-2 Fix B: <code>_revert_position_clusters</code></h3>
+<pre class="mermaid">flowchart TD
+    B_IN([_revert_position_clusters&lt;br/&gt;mapped, sequence]) --&gt; SLIDE[Скользящее окно по mapped]
+    SLIDE --&gt; WINDOW[Окно ≥3&lt;br/&gt;последовательных секций]
+
+    WINDOW --&gt; COND1{Все имеют&lt;br/&gt;page?&lt;br/&gt;strategy != page_cut?}
+    COND1 --&gt;|Нет| NEXT_W[Сдвинуть окно]
+    COND1 --&gt;|Да| COND2{span позиций&lt;br/&gt;≤ CLUSTER_SPAN&lt;br/&gt;4000 chars?}
+
+    COND2 --&gt;|Нет| NEXT_W
+    COND2 --&gt;|Да| COND3{spread page-estimates&lt;br/&gt;≥ CLUSTER_PAGE_SPAN&lt;br/&gt;15000 chars?}
+
+    COND3 --&gt;|Нет| NEXT_W
+    COND3 --&gt;|Да&lt;br/&gt;Аномалия!| REVERT[Реверт всего runs&lt;br/&gt;в not_found&lt;br/&gt;page_cut положит&lt;br/&gt;правильно по странице]
+
+    REVERT --&gt; NEXT_W
+    NEXT_W --&gt;|Есть ещё?| WINDOW
+    NEXT_W --&gt;|Конец| RETB([return mapped])
+
+    classDef class2 fill:#a855f7,stroke:#7e22ce,color:#fff
+    classDef detect fill:#dc2626,stroke:#991b1b,color:#fff
+    classDef action fill:#f59e0b,stroke:#d97706,color:#000
+    class COND1,COND2,COND3 detect
+    class REVERT action
+    class SLIDE,WINDOW class2</pre>
+<p><strong>Аномальный сигнал</strong>: позиции crammed в маленьком окне (4K chars) при page-estimates spread на широком окне (15K chars) = back-matter список глав/индекс, не реальные body. Бесплатно фиксирует Do Good Главы 8–12 (3K span на 5 глав!) при page-estimates 180–230K. Не срабатывает на parallelnoe/Массель (позиции crammed без page spread — это норма для плотной книги).</p>
+<h3 id="54-confidence">5.4. Стратегии и confidence</h3>
+<table>
+<thead>
+<tr>
+<th>Strategy</th>
+<th>Confidence</th>
+<th>Очистка</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>exact</code></td>
+<td>1.00</td>
+<td>algo</td>
+</tr>
+<tr>
+<td><code>tokenized_regex</code></td>
+<td>0.85</td>
+<td>algo</td>
+</tr>
+<tr>
+<td><code>exact_normalized</code></td>
+<td>1.00</td>
+<td>algo</td>
+</tr>
+<tr>
+<td><code>page_hint_exact</code></td>
+<td>0.90</td>
+<td>algo</td>
+</tr>
+<tr>
+<td><code>page_hint_tokenized</code></td>
+<td>0.75</td>
+<td>LLM</td>
+</tr>
+<tr>
+<td><code>embedding_rescue</code></td>
+<td>0.50–0.70</td>
+<td>LLM</td>
+</tr>
+<tr>
+<td><code>fuzzy_rescue</code></td>
+<td>~0.70</td>
+<td>LLM</td>
+</tr>
+<tr>
+<td><code>llm_rescue</code></td>
+<td>0.55</td>
+<td>LLM</td>
+</tr>
+<tr>
+<td><code>partial_words</code></td>
+<td>0.60</td>
+<td>LLM</td>
+</tr>
+<tr>
+<td><code>num_prefix</code></td>
+<td>0.40</td>
+<td>LLM</td>
+</tr>
+<tr>
+<td><code>page_cut</code></td>
+<td>0.30</td>
+<td>algo (bypass <code>fix_chapter_boundary</code>)</td>
+</tr>
+<tr>
+<td><code>reverted_*</code></td>
+<td>0.00</td>
+<td>не очищается (пустой content)</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="6-list-context-preference-pdf_utils_search_with_confidence">6. List-context preference в <code>pdf_utils._search_with_confidence</code></h2>
+<p>Это критический фикс маппинга, без которого книги с in-body bulleted summaries деградируют. Применяется к <code>exact</code> и <code>tokenized</code> стратегиям.</p>
+<pre class="mermaid">flowchart TD
+    SI([_search_with_confidence&lt;br/&gt;title, full_text, current_pos]) --&gt; ALL_OCC[Найти ВСЕ вхождения&lt;br/&gt;title в full_text&lt;br/&gt;после current_pos]
+
+    ALL_OCC --&gt; EMPTY{Вхождений&lt;br/&gt;нет?}
+    EMPTY --&gt;|Да| FALLBACK_NF[return None, 0]
+
+    EMPTY --&gt;|Нет| FILTER[Для каждого вхождения&lt;br/&gt;проверить _is_list_context]
+
+    FILTER --&gt; LOOP{Для каждого pos:&lt;br/&gt;текст после pos +50 chars}
+
+    LOOP --&gt; CHK_BULLET{Начинается&lt;br/&gt;с буллета • · …?}
+    CHK_BULLET --&gt;|Да| MARK_LIST[mark as list-like]
+    CHK_BULLET --&gt;|Нет| CHK_DOTS{leader-dots в&lt;br/&gt;первых 50 chars?}
+
+    CHK_DOTS --&gt;|Да| MARK_LIST
+    CHK_DOTS --&gt;|Нет| CHK_BULLET2{другой буллет&lt;br/&gt;в окне ~50 chars?}
+
+    CHK_BULLET2 --&gt;|Да| MARK_LIST
+    CHK_BULLET2 --&gt;|Нет| MARK_PROSE[mark as prose]
+
+    MARK_LIST --&gt; NEXT_OCC
+    MARK_PROSE --&gt; NEXT_OCC{Ещё вхождения?}
+    NEXT_OCC --&gt;|Да| LOOP
+    NEXT_OCC --&gt;|Нет| PREFER[Выбор:&lt;br/&gt;первое prose, если есть]
+
+    PREFER --&gt; HAS_PROSE{Есть prose?}
+    HAS_PROSE --&gt;|Да| RETURN_PROSE[return prose pos, conf]
+    HAS_PROSE --&gt;|Нет&lt;br/&gt;ВСЕ list| FALLBACK_FIRST[return первое вхождение&lt;br/&gt;без изменения поведения]
+
+    RETURN_PROSE --&gt; RET([return pos, confidence])
+    FALLBACK_FIRST --&gt; RET
+    FALLBACK_NF --&gt; RET
+
+    classDef detect fill:#dc2626,stroke:#991b1b,color:#fff
+    classDef action fill:#16a34a,stroke:#15803d,color:#fff
+    class CHK_BULLET,CHK_DOTS,CHK_BULLET2 detect
+    class MARK_LIST,MARK_PROSE,PREFER,FALLBACK_FIRST action</pre>
+<p><strong>Зачем</strong>: в книгах с in-body bulleted summaries (Розенсон) или leader-dot mini-contents (Кениг) первое вхождение title — это в bullet-list. Без list-context preference content = «•» или dots. Хуже: неправильный ранний матч сдвигает <code>current_pos</code>, и следующие title не находятся → page_cut → garbled content (Клейнман cascade regression).</p>
+<p>С фиксом: Розенсон/Кениг body recovered (ratio ~1.0), Клейнман 0 page_cut.</p>
+<hr>
+<h2 id="7-ocr-engine-recovery-400">7. OCR Engine с recovery на 400</h2>
+<p><code>ocr_engine.ocr_document()</code> — обработка всех страниц с защитой от частичных потерь.</p>
+<pre class="mermaid">flowchart TD
+    OIN([ocr_document&lt;br/&gt;doc, max_pages]) --&gt; AVAIL{is_available&lt;br/&gt;glm-ocr в LM Studio?}
+    AVAIL --&gt;|Нет| RAISE[RuntimeError]
+    AVAIL --&gt;|Да| LOOP_PAGE[Для каждой страницы 0..total]
+
+    LOOP_PAGE --&gt; GET_TEXT[existing_text = page.get_text&lt;br/&gt;has_images = page.get_images]
+
+    GET_TEXT --&gt; EMPTY_SKIP{0 chars&lt;br/&gt;+ 0 images?}
+    EMPTY_SKIP --&gt;|Да| SKIP[pieces += пустая&lt;br/&gt;пропуск]
+    EMPTY_SKIP --&gt;|Нет| PIXMAP[page.get_pixmap&lt;br/&gt;DPI=150]
+
+    PIXMAP --&gt; TOPNG[png_bytes = tobytes png]
+    TOPNG --&gt; CALL[await ocr_page_image&lt;br/&gt;с timeout 60s]
+
+    CALL --&gt; TIMEOUT_ERR{Timeout?}
+    TIMEOUT_ERR --&gt;|Да| EMPTY_TEXT[text = &#x27;&#x27;&lt;br/&gt;_safe_print timeout]
+    TIMEOUT_ERR --&gt;|Нет| BAD_REQ_ERR{BadRequestError&lt;br/&gt;400?}
+
+    BAD_REQ_ERR --&gt;|Да| RECOVERY[_extract_text_from_ocr_error&lt;br/&gt;regex Failed to parse input&lt;br/&gt;на body или str e]
+    BAD_REQ_ERR --&gt;|Нет| OTHER_ERR{Другое&lt;br/&gt;исключение?}
+
+    OTHER_ERR --&gt;|Да| EMPTY_TEXT
+    OTHER_ERR --&gt;|Нет&lt;br/&gt;успех| OK_TEXT[text = response]
+
+    RECOVERY --&gt; REC_OK{Recovery&lt;br/&gt;вернул текст?}
+    REC_OK --&gt;|Да| OK_TEXT
+    REC_OK --&gt;|Нет + existing_text| FALLBACK_PDF[text = existing_text&lt;br/&gt;text-layer PyMuPDF]
+    REC_OK --&gt;|Нет + пусто| EMPTY_TEXT
+    FALLBACK_PDF --&gt; OK_TEXT
+
+    SKIP --&gt; NEXT_P
+    OK_TEXT --&gt; APPEND[pieces.append text]
+    EMPTY_TEXT --&gt; APPEND
+    APPEND --&gt; NEXT_P{Ещё страницы?}
+    NEXT_P --&gt;|Да| LOOP_PAGE
+    NEXT_P --&gt;|Нет| JOIN[return join pieces]
+
+    classDef ocr fill:#dc2626,stroke:#991b1b,color:#fff
+    classDef recovery fill:#a855f7,stroke:#7e22ce,color:#fff
+    classDef fallback fill:#f59e0b,stroke:#d97706,color:#000
+    classDef ok fill:#16a34a,stroke:#15803d,color:#fff
+
+    class CALL,PIXMAP,TOPNG ocr
+    class RECOVERY,REC_OK recovery
+    class FALLBACK_PDF,EMPTY_TEXT fallback
+    class OK_TEXT,APPEND ok</pre>
+<p><strong>Recovery</strong>: glm-ocr возвращает HTTP 400 «Failed to parse input» с OCR-текстом ВНУТРИ тела ошибки. <code>_extract_text_from_ocr_error</code> достаёт это regex'ом, и страница не теряется. Fallback на text-layer PyMuPDF — если recovery вернуло пустоту, но текстовый слой PDF существует. Никогда не молча дропать страницы.</p>
+<hr>
+<h2 id="8-content-cleaning">8. Content cleaning — два пути</h2>
+<pre class="mermaid">flowchart LR
+    SEC([Секция с&lt;br/&gt;raw_chunk]) --&gt; CONF{confidence&lt;br/&gt;≥ 0.85?}
+
+    CONF --&gt;|Да&lt;br/&gt;exact,&lt;br/&gt;tokenized,&lt;br/&gt;exact_normalized,&lt;br/&gt;page_hint_exact| ALGO[fast_clean_chunk&lt;br/&gt;склейка переносов&lt;br/&gt;удаление одиночных номеров&lt;br/&gt;нормализация переводов]
+
+    CONF --&gt;|Нет&lt;br/&gt;partial, num_prefix,&lt;br/&gt;page_hint_tokenized,&lt;br/&gt;fuzzy_rescue,&lt;br/&gt;embedding_rescue,&lt;br/&gt;llm_rescue| LLM_BOUND[fix_chapter_boundary&lt;br/&gt;LLM: где кончается заголовок?&lt;br/&gt;максимум 3000 chars входа]
+
+    LLM_BOUND --&gt; TRIM[raw_chunk =&lt;br/&gt;raw_chunk от offset]
+    TRIM --&gt; LLM_PROC[process_large_text&lt;br/&gt;asyncio.gather&lt;br/&gt;чанки по 2500 chars]
+
+    LLM_PROC --&gt; EACH_CHUNK[clean_text_fragment&lt;br/&gt;на каждый чанк]
+    EACH_CHUNK --&gt; LANG_CHK{detect_foreign_script&lt;br/&gt;в выходе ≥ 5%&lt;br/&gt;CJK/арабский?}
+
+    LANG_CHK --&gt;|Нет| OK1[OK]
+    LANG_CHK --&gt;|Да| RETRY[Retry с КРИТИЧЕСКИМ&lt;br/&gt;префиксом промпта]
+    RETRY --&gt; LANG_CHK2{Снова&lt;br/&gt;чужие символы?}
+    LANG_CHK2 --&gt;|Да| FALLBACK[Вернуть оригинал&lt;br/&gt;raw_chunk]
+    LANG_CHK2 --&gt;|Нет| OK2[OK]
+
+    ALGO --&gt; SCRUB
+    OK1 --&gt; SCRUB
+    OK2 --&gt; SCRUB
+    FALLBACK --&gt; SCRUB[scrub_foreign_script&lt;br/&gt;title + content&lt;br/&gt;финальная защита]
+
+    SCRUB --&gt; NODE([final_node])
+
+    classDef algo fill:#16a34a,stroke:#15803d,color:#fff
+    classDef llm fill:#7c3aed,stroke:#5b21b6,color:#fff
+    classDef guard fill:#dc2626,stroke:#991b1b,color:#fff
+    classDef scrub fill:#a855f7,stroke:#7e22ce,color:#fff
+
+    class ALGO algo
+    class LLM_BOUND,LLM_PROC,EACH_CHUNK,RETRY llm
+    class LANG_CHK,LANG_CHK2 guard
+    class SCRUB scrub</pre>
+<p><strong>Защита от CJK</strong> — в три слоя:
+1. Промпт <code>clean_text_fragment</code> фиксирует <code>target_lang</code> через сравнение долей кириллицы/латиницы на первых 300 chars входа.
+2. После LLM-вывода <code>detect_foreign_script</code> считает долю CJK; если ≥5% — retry с «КРИТИЧЕСКАЯ ОШИБКА» префиксом.
+3. Финальный <code>scrub_foreign_script</code> в <code>pdf_parser_neural.py</code> post-loop — удаляет любые остаточные CJK/арабские символы из title + content на ВСЕХ путях. Это бэкстоп.</p>
+<hr>
+<h2 id="9">9. Карта функций по модулям</h2>
+<p>Самая частая навигация — «где живёт эта функция / что от чего зависит». Полная карта:</p>
+<pre class="mermaid">graph LR
+    subgraph pdf_parser_neural.py
+        PPN_main[&quot;parse_pdf_neural&quot;]
+        PPN_main --&gt; PPN_clean[scrub_foreign_script post-loop]
+    end
+
+    subgraph toc_builder.py
+        TB_build[&quot;build_toc&quot;]
+        TB_build --&gt; TB_heur[&quot;_heuristic&quot;]
+        TB_build --&gt; TB_llm[&quot;_llm_from_text_retry&quot;]
+        TB_build --&gt; TB_ocrh[&quot;_ocr_then_heuristic&quot;]
+        TB_build --&gt; TB_ocrl[&quot;_ocr_then_llm&quot;]
+        TB_build --&gt; TB_deep[&quot;_deep_scan&quot;]
+        TB_build --&gt; TB_expand[&quot;_llm_expand_parts&quot;]
+        TB_build --&gt; TB_dedup[&quot;_dedup_and_order&quot;]
+        TB_build --&gt; TB_split[&quot;_split_sticky_toc_lines&quot;]
+        TB_build --&gt; TB_incomp[&quot;_looks_incomplete&quot;]
+        TB_build --&gt; TB_select[&quot;_select_best&quot;]
+        TB_dedup --&gt; TB_fuzzy[&quot;_drop_fuzzy_pageless_dupes&quot;]
+        TB_incomp --&gt; TB_count[&quot;_count_toc_entry_lines&quot;]
+        TB_select --&gt; TV_score
+        TB_llm --&gt; TB_norm[&quot;_normalize_llm_items&quot;]
+    end
+
+    subgraph toc_validate.py
+        TV_score[&quot;score_toc&quot;]
+        TV_score --&gt; TV_formal[&quot;check_formal&quot;]
+        TV_score --&gt; TV_cjk[&quot;check_cjk&quot;]
+        TV_score --&gt; TV_ground[&quot;_ground_titles&quot;]
+        TV_valid[&quot;is_valid&quot;]
+    end
+
+    subgraph toc_parser.py
+        TP_parse[&quot;HeuristicParser.parse_toc&quot;]
+        TP_parse --&gt; TP_split[&quot;_split_sticky&quot;]
+        TP_parse --&gt; TP_garb[&quot;_is_garbage_toc_item&quot;]
+        TP_parse --&gt; TP_guess[&quot;_guess_level&quot;]
+        TP_parse --&gt; TP_trim[&quot;_trim_description_after_section_name&quot;]
+        TP_lin[&quot;toc_to_linear_sequence&quot;]
+    end
+
+    subgraph mapping_pipeline.py
+        MP_main[&quot;map_sequence&quot;]
+        MP_main --&gt; MP_find[&quot;find_real_indices&quot;]
+        MP_main --&gt; MP_verify[&quot;_verify_and_correct_order&quot;]
+        MP_main --&gt; MP_ph[&quot;_page_hint_search&quot;]
+        MP_main --&gt; MP_fuzz[&quot;_fuzzy_locate&quot;]
+        MP_main --&gt; MP_emb[&quot;embedding_rescue&quot;]
+        MP_main --&gt; MP_llm[&quot;llm_rescue&quot;]
+        MP_main --&gt; MP_restA[&quot;_restored_after_rescue_fail&quot;]
+        MP_main --&gt; MP_revB[&quot;_revert_position_clusters&quot;]
+        MP_main --&gt; MP_pcut[&quot;page_cut&quot;]
+        MP_verify --&gt; MP_toc[&quot;_looks_like_toc_content&quot;]
+    end
+
+    subgraph pdf_utils.py
+        PU_find[&quot;find_real_indices&quot;]
+        PU_find --&gt; PU_search[&quot;_search_with_confidence&quot;]
+        PU_search --&gt; PU_list[&quot;_is_list_context&quot;]
+        PU_search --&gt; PU_first[&quot;_find_first_nonlist&quot;]
+        PU_search --&gt; PU_first2[&quot;_first_nonlist_match&quot;]
+        PU_fast[&quot;fast_clean_chunk&quot;]
+        PU_clean[&quot;clean_footer_header&quot;]
+        PU_read[&quot;check_document_readability&quot;]
+    end
+
+    subgraph llm_engine.py
+        LE_extract[&quot;extract_toc_json&quot;]
+        LE_extract --&gt; LE_parse[&quot;_parse_toc_items&quot;]
+        LE_locate[&quot;locate_section_in_text&quot;]
+        LE_clean[&quot;clean_text_fragment&quot;]
+        LE_proc[&quot;process_large_text&quot;]
+        LE_boundary[&quot;fix_chapter_boundary&quot;]
+        LE_scrub[&quot;scrub_foreign_script&quot;]
+        LE_detect[&quot;detect_foreign_script&quot;]
+        LE_msg[&quot;_extract_message_content&quot;]
+    end
+
+    subgraph ocr_engine.py
+        OE_doc[&quot;ocr_document&quot;]
+        OE_doc --&gt; OE_page[&quot;ocr_page_image&quot;]
+        OE_doc --&gt; OE_safe[&quot;_safe_print&quot;]
+        OE_doc --&gt; OE_extract[&quot;_extract_text_from_ocr_error&quot;]
+        OE_avail[&quot;is_available&quot;]
+    end
+
+    subgraph embedding_engine.py
+        EE_locate[&quot;locate_section&quot;]
+        EE_top[&quot;top_matches&quot;]
+        EE_embed[&quot;_embed_text&quot;]
+    end
+
+    PPN_main --&gt; TB_build
+    PPN_main --&gt; MP_main
+    PPN_main --&gt; PU_read
+    PPN_main --&gt; LE_scrub
+    PPN_main --&gt; PU_fast
+    PPN_main --&gt; LE_clean
+    PPN_main --&gt; LE_boundary
+    PPN_main --&gt; LE_proc
+    PPN_main --&gt; OE_doc
+
+    TB_build --&gt; TP_parse
+    TB_build --&gt; LE_extract
+    TB_build --&gt; OE_doc
+    TB_build --&gt; TV_score
+
+    TV_ground --&gt; EE_embed
+    TV_cjk --&gt; LE_detect
+
+    MP_main --&gt; PU_find
+    MP_main --&gt; EE_locate
+    MP_main --&gt; LE_locate
+
+    LE_clean --&gt; LE_detect
+    LE_extract --&gt; LE_parse
+    LE_extract --&gt; LE_msg
+
+    classDef coord fill:#4a90e2,stroke:#2563eb,color:#fff
+    classDef cascade fill:#7c3aed,stroke:#5b21b6,color:#fff
+    classDef util fill:#16a34a,stroke:#15803d,color:#fff
+    classDef adapter fill:#f59e0b,stroke:#d97706,color:#000
+    classDef validator fill:#a855f7,stroke:#7e22ce,color:#fff
+
+    class PPN_main coord
+    class TB_build,MP_main cascade
+    class TP_parse,PU_find,PU_fast,PU_clean util
+    class LE_extract,LE_clean,OE_doc,EE_locate adapter
+    class TV_score validator</pre>
+<hr>
+<h2 id="10">10. Сценарии — кто и когда задействуется</h2>
+<table>
+<thead>
+<tr>
+<th>Сценарий</th>
+<th>Что вызывается</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Простая ВКР</strong> (bookфизика, Машинное обучение, Виды UI)</td>
+<td><code>parse_pdf_neural</code> → <code>build_toc</code> (early exit на heuristic) → <code>map_sequence</code> (только regex) → <code>fast_clean_chunk</code>. <strong>Без LLM/OCR/embed.</strong></td>
+</tr>
+<tr>
+<td><strong>Книга со сложной вёрсткой ToC</strong> (Розенсон, Клейнман)</td>
+<td><code>parse_pdf_neural</code> → <code>build_toc</code> (heuristic неполна → <code>_llm_from_text_retry</code> → <code>_select_best</code> → выбран llm) → <code>map_sequence</code> (regex + list-context fix) → mix <code>fast_clean_chunk</code> и <code>clean_text_fragment</code></td>
+</tr>
+<tr>
+<td><strong>Книга с двумя ToC</strong> (Release It!)</td>
+<td><code>parse_pdf_neural</code> → <code>build_toc</code> (heuristic 153 ловит оба ToC + dedup) → <code>map_sequence</code> (раннее verify ловит in-ToC + restore) → mostly <code>fast_clean_chunk</code></td>
+</tr>
+<tr>
+<td><strong>Стандарт с List of Figures</strong> (MIL-STD-1472G)</td>
+<td><code>parse_pdf_neural</code> → <code>build_toc</code> (heuristic + TERMINAL_SECTION_MARKERS останавливает у Figures) → <code>map_sequence</code> (regex + Class-2 reverts) → <code>fast_clean_chunk</code></td>
+</tr>
+<tr>
+<td><strong>Книга с битой кодировкой</strong> (0e6e53b)</td>
+<td><code>parse_pdf_neural</code> → <code>check_document_readability=False</code> → <code>ocr_client.ocr_document</code> (включая 400 recovery) → <code>build_toc</code> с ocr_text (level 3 OCR heuristic → level 4 OCR LLM → выбран ocr_llm) → <code>map_sequence</code> (embedding_rescue heavy) → mix <code>clean_text_fragment</code></td>
+</tr>
+<tr>
+<td><strong>Книга с крупно-типографскими заголовками</strong> (Иглмен)</td>
+<td><code>parse_pdf_neural</code> → <code>build_toc</code> (LLM) → <code>map_sequence</code> (regex не находит → page_cut спасает) → mix</td>
+</tr>
+<tr>
+<td><strong>Книга без префиксов</strong> (digital-design, <strong>Дефект А</strong>)</td>
+<td><code>parse_pdf_neural</code> → <code>build_toc</code> (ocr_llm без N.N.N префиксов) → <code>map_sequence</code> (regex находит первое generic вхождение → каша) → 79 секций &lt;100 chars</td>
+</tr>
+<tr>
+<td><strong>Книга с multi-line ToC</strong> (1332, 12_100229, <strong>Дефект Б</strong>)</td>
+<td><code>parse_pdf_neural</code> → <code>build_toc</code> (heuristic, title = «1.», «2.» с пустым описанием) → <code>map_sequence</code> (exact matches на «1.» в header) → 10+ пустых</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="11">11. Точки расширения</h2>
+<p>Места, куда хорошо вписываются новые слои:</p>
+<table>
+<thead>
+<tr>
+<th>Куда</th>
+<th>Что добавить</th>
+<th>Польза</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>build_toc</code> после <code>_select_best</code></td>
+<td>Post-process re-attach numerical prefix из raw text (Дефект А)</td>
+<td>digital-design, 978-5-7996 — content починится</td>
+</tr>
+<tr>
+<td><code>HeuristicParser.parse_toc</code> после commit numbers-only title</td>
+<td>Multi-line lookahead — пик следующую строку, мерж если non-page-bearing alphabetic (Дефект Б)</td>
+<td>1332, 12_100229</td>
+</tr>
+<tr>
+<td><code>_looks_incomplete</code></td>
+<td>Окно вокруг СОДЕРЖАНИЕ-маркера или soft-cap ±10 страниц</td>
+<td>ВКР — экономия 170с фейлящего fallback</td>
+</tr>
+<tr>
+<td>Между fuzzy_rescue и embedding_rescue</td>
+<td>OCR-aware edit-distance (распространённые замены и↔ы, ц↔щ, н↔п)</td>
+<td>digital-design OCR drift</td>
+</tr>
+<tr>
+<td>После всех rescue</td>
+<td>Content-quality check: «body = leader-dots / bullet / ToC fragment?» → flag misplacement</td>
+<td>Замена обманывающих coverage/length метрик</td>
+</tr>
+<tr>
+<td>Новый этап перед page_cut</td>
+<td>LLM <code>locate_chapter_by_summary</code> — отдать LLM модельный обзор контента + список глав, получить локации</td>
+<td>Книги с крупно-типографскими headers где title не извлекается</td>
+</tr>
+</tbody>
+</table>
+<p>Каждое — известный класс дефектов с одним из 19+ книг как regression test.</p>
+</div>
+</body>
+</html>
