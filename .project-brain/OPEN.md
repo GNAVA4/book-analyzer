@@ -1,5 +1,20 @@
 # OPEN ITEMS — Book Analyzer
-_Last updated: 2026-06-27 session 009_
+_Last updated: 2026-06-28 session 013_
+
+## NEXT — prioritized plan (12_100229 remaining junk, session 013 analysis)
+Recommended order. All are SEPARATE from the watermark fix (mech.2, done).
+- **A. page_cut → front-matter ToC (mech.1+3) — HIGH value, recommended FIRST.**
+  «мусор из содержания в теле»: ~10 early sections get leader-dots; a few absorb a whole
+  ToC block (8458 chars). Fix: detect body-start (where ToC leader-dots stop, ~pos 55k in
+  12_100229) and clamp page_cut start `>= body_start`. Local, no cascade risk.
+- **B. Header-noise cluster — medium.** Running-header+underscore-fill («…микросхемы____»,
+  «Гпава 4____») + short «Глава N» headers. Need normalize (strip trailing `_`/dot runs
+  before dedup) + pattern for «Глава/Гпава N». Frequency alone won't catch (the fill makes
+  lines non-identical; «Глава N» is per-chapter <60% pages).
+- **C. Spurious glossary/index sections — low.** ToC extracted glossary terms as sections
+  («микроконтроллерах»→«и БИС»; «Приложение 2»→BEDORAM/BIST defs). ToC-extraction quality.
+- **D. Titles absent from body — low.** 110 page_cut have real-ish prose but no anchor;
+  boundaries approximate. Hard (body exists, heading doesn't).
 
 ## In progress / decision pending (session 009)
 - [x] **XML `chars` attribute** — added to every `<section>` (own-content length).

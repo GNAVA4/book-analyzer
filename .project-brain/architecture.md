@@ -1,5 +1,5 @@
 # Architecture — Book Analyzer
-_Last updated: 2026-05-30 (session 005)_
+_Last updated: 2026-06-28 (session 013)_
 
 ## What this system does
 Parses PDF/DOCX/TXT books into structured XML: extracts Table of Contents and slices each section's
@@ -54,6 +54,18 @@ for both ToC extraction and section mapping — handles damaged, scanned, and co
 - **Non-obvious:** `scrub_foreign_script` is called HERE after the clean loop, not inside fast_clean_chunk.
   This is intentional — it must run on ALL paths (fast and LLM). Do not move it into fast_clean_chunk.
   The CONFIDENCE_THRESHOLD=0.85 split determines algo vs LLM clean — don't change without ADR.
+  - **`_pick_body_source(text_layer, ocr_text)` (s12)** — selects the BODY text for mapping by
+    directly COMPARING the candidate texts (garbage-quality on a front+mid sample + length/coverage),
+    NOT the readability flag. Was a critical bug: when a READABLE doc's ToC escalated to OCR,
+    build_toc returned a short ToC-only `ocr_text` that overrode the full readable text layer
+    (digital-design: 25k ToC vs 1.5M body → 94 sections page_cut). Rule: garbage text layer → OCR
+    (0e6e53b); clean & len≥ocr → text layer (digital-design/978/Клейнман/Кениг/ВКР); clean but shorter
+    → OCR. Fixed a SYSTEMIC issue across every OCR-escalated book.
+  - **Per-page watermark strip (s13)** — `footer_junk_lines(full_text, total_pages)` computed once;
+    the junk lines are stripped from each section's SLICED content (not from full_text before mapping —
+    that would shift page_cut positions and churn neighbours). See pdf_utils.
+  - **`chars` XML attr (s9)** — each `<section>` carries `chars` = own-content length (for honest
+    content audits; the `real>100` count is a metric trap).
 
 ---
 
@@ -123,6 +135,16 @@ are invoked SEQUENTIALLY (GPU ≤90%). `_llm_from_text_retry` retries up to 3× 
   - **`current_pos` cascade discipline**: `find_real_indices` advances `current_pos` after each
     match, so a wrong early match pushes later titles past their real bodies → page_cut. The
     list-context preference in `pdf_utils._search_with_confidence` is what keeps this disciplined.
+  - **page_cut = PURE linear estimate + same-page staggering (s9–s11).** Final fallback for sections
+    with no found position: `start = (page-1)/total_pages * full_text_len`. Sessions 007–010 tried
+    GLOBAL anchor-interpolation (interpolate page→pos between trusted matches) AND a narrow LOCAL
+    backward-anchor — BOTH REVERTED. The global version got poisoned by mis-placed trusted matches
+    (a title matched inside the back-matter index) and cascaded neighbours into the index
+    (AI 184→169; 30 sections sharing one identical index blob). The local version gave ≈0 net and
+    couldn't fix MIL-STD 5.1.2.5 (its right bound 5.1.3 is itself order-inverted). **Do NOT
+    reintroduce anchor-interpolation here.** Fix B (s11): page_cut sections on the SAME page were
+    getting the IDENTICAL estimate → identical slice window → byte-identical duplicate content;
+    now a page's G>1 sections are staggered across the page width (single-per-page = exact linear).
 
 **Cascade levels:**
 1. `find_real_indices` — regex with 4 strategies: exact, tokenized_regex, partial_words, num_prefix
@@ -198,6 +220,17 @@ are invoked SEQUENTIALLY (GPU ≤90%). `_llm_from_text_retry` retries up to 3× 
     → promoted to confidence=1.0. Added to page-distance whitelist. This catches whitespace-only diffs.
   - `fast_clean_chunk` does NOT remove CJK. `scrub_foreign_script` in pdf_parser_neural.py handles that.
   - `check_document_readability` uses garbage_ratio + char diversity. Threshold tuned empirically.
+    NB: it samples ≤10 pages and SKIPS pages with <50 chars — so it can mis-judge a doc whose body
+    is sparse; the body-source decision uses `_pick_body_source` (compares actual texts), not just
+    this flag.
+  - **Footer/watermark removal (s13)**: `footer_junk_lines(text, total_pages)` returns junk lines —
+    (a) long running headers (len>20, repeat>4) and (b) short per-page watermarks (len≥5 repeating on
+    > `HEADER_WATERMARK_PAGE_FRACTION=0.60` of pages, e.g. «Библиотека БГУИР» 100%, «MIL-STD-1472G»
+    100%). `strip_junk_lines(text, junk)` removes them. Threshold is HIGH (0.60) on purpose: repeated
+    CONTENT (parallelnoe code labels «Объявление» 39%, ВКР district names 31%) sits ≤39% and must NOT
+    be deleted; the 39%↔82% gap is clean. Match is exact stripped LINES, not substrings.
+    `clean_footer_header` = compose both (used by fast parser on full_text; neural parser strips junk
+    from per-section content instead, to keep page_cut positions stable).
   - **List-context preference (session 004 end, commit c81fcf0)**: `_search_with_confidence`
     prefers the first occurrence whose FOLLOWING text is prose, not a list. Helpers:
     `_is_list_context` (detects leading bullet `•·…`, leader-dots, or another bullet within
@@ -282,7 +315,7 @@ are invoked SEQUENTIALLY (GPU ≤90%). `_llm_from_text_retry` retries up to 3× 
 - **Location:** `app/services/xml_builder.py`
 - **Non-obvious:**
   - `NavigationTable` is built from `sequence` (ToC items), not `final_nodes` (mapped sections).
-  - Each `<section>` has `title`, `page`, `confidence`, `match_strategy` attributes.
+  - Each `<section>` has `title`, `page`, `confidence`, and `chars` (own-content length, s9) attributes.
 
 ---
 
@@ -297,10 +330,14 @@ are invoked SEQUENTIALLY (GPU ≤90%). `_llm_from_text_retry` retries up to 3× 
    - Else smart fallback: collect candidates (heuristic/LLM/OCR+LLM, sequential) → `_select_best`
      picks the best VALIDATED (formal+CJK+grounding≥0.8) → else keep heuristic. Then deep_scan/expand.
 6. Optional: `validate_toc_via_ocr(doc, sequence)` → `meta['toc_validation']`
-7. `clean_footer_header(full_text)` → removes headers/footers from page joins
+7. **Body text** = `_pick_body_source(get_all_text(doc), ocr_text)` (s12) — compares text-layer vs
+   OCR by quality+coverage; THEN `clean_footer_header(full_text)` removes long running headers;
+   `footer_junk = footer_junk_lines(full_text, total_pages)` collects per-page watermarks for later.
 8. `map_sequence(sequence, full_text, total_pages)` → `mapped` list with start/end positions
-9. For each mapped section: slice `full_text[end_idx : next_start_idx]`
-   - confidence ≥ 0.85 → `fast_clean_chunk(raw_chunk)`
+   (page_cut = pure linear estimate + same-page staggering)
+9. For each mapped section: slice `full_text[end_idx : next_start_idx]`, then
+   `strip_junk_lines(chunk, footer_junk)` (watermark out of CONTENT only — positions stay stable)
+   - confidence ≥ 0.85 (or page_cut) → `fast_clean_chunk(raw_chunk)`
    - confidence < 0.85 → `fix_chapter_boundary()` + `process_large_text()`
    - Always: `scrub_foreign_script(title)` + `scrub_foreign_script(content)`
 10. `build_tree_structure(final_nodes)` + `dict_to_xml(tree)` → XML string
@@ -356,24 +393,26 @@ are invoked SEQUENTIALLY (GPU ≤90%). `_llm_from_text_retry` retries up to 3× 
   invalidated a perfect 77-item Розенсон ToC.
 
 ## Known technical debt
+_Resolved since s005: «LLM strips hierarchical numbering» (s6 prompt + reattach); «heuristic loses
+chapter title» (s6 merge_wrap); «MIL-STD 5.1.2.5» (s12: root = mis-placed neighbour 5.1.3, accepted);
+«Клейнман 36 page_cut» (s12: was the body-source bug, now 40/40 exact)._
+
 - **`_looks_incomplete` over-triggers** (s5): on books where first 20 pages contain body refs to page
-  numbers, raw_entries grossly over-counts. ВКР: ratio 2.36 but heuristic 14 = correct. Causes
-  ~170s wasted on LLM+OCR fallback whose output isn't even chosen. Tune options in OPEN.md.
-- **LLM strips hierarchical numbering** (s5 bug, open): `extract_toc_json` returns «Абстракция» where
-  ToC has «1.2.1 Абстракция». Wrecks mapping for ocr_llm / llm books (digital-design 20/105 real).
-- **Heuristic loses chapter title after number** (s5 bug, open): multi-line ToC entries «N.» / «Title»
-  on separate lines produce titles like «1.», «2.» with empty descriptions (1332, 12_100229).
-- **MIL-STD 5.1.2.5 absorbed +61k chars** (s5, root unclear): exact-→page_cut redistribution after
-  list-context fix; needs `audit_content.py` investigation.
-- **Клейнман: real pipeline gives 36 page_cut, CONTEXT/mapping_audit claimed 0** — measurement
-  discrepancy between debug tool and `parse_pdf_neural`; needs reconciliation.
-- **`_restored_after_rescue_fail` can restore false positives** (s4): Do Good Design "Об авторе"
-  gets copyright text in some configurations. Fix A partially addresses via defer-to-page_cut, but
-  page_cut is only as good as linear pagination.
-- **toc_validation metric is noisy**: coverage_pct unreliable when heuristic already found ToC perfectly.
-- **No LM Studio context guard**: pipeline doesn't warn if model loaded with ctx < 8192.
-- **No content-quality check for «•»/dots/ToC-fragment bodies**: coverage and length-based metrics
-  mask misplacement. Reliable content-quality signal still TODO.
+  numbers, raw_entries over-counts. ВКР: ratio 2.36 but heuristic 14 = correct. ~170s wasted.
+- **12_100229 remaining junk (s13, OPEN groups A–D):** page_cut into front-matter ToC leader-dots
+  (~10 early sections) + ToC-block absorption (M1/M3); running-header+underscore-fill noise
+  («…микросхемы____», «Гпава 4____») and short «Глава N» headers (frequency won't catch — need
+  normalize/pattern); spurious glossary/index terms extracted as sections; titles absent from body
+  (only in ToC) → forced page_cut.
+- **digital-design residual (s12):** 46 page_cut — OCR-extracted ToC titles don't string-match the
+  text-layer body (1 truly lost). Candidate: fuzzy/OCR-aware match now that the body is searchable.
+- **978-5-7996 LLM ToC nondeterminism**: section count swings run-to-run; retry didn't fix.
+- **`_restored_after_rescue_fail` can restore false positives** (s4): Do Good «Об авторе» copyright.
+- **MIL-STD 5.1.2.5 bloat (61677) ACCEPTED**: root is order-inverted neighbour 5.1.3, not page_cut.
+- **toc_validation metric is noisy**; **no LM Studio ctx<8192 guard**.
+- **`real>100` count is a metric TRAP**: page_cut into front-matter / watermark padding / duplicates
+  all count as "real". Judge by `match_strategy` mix + content correctness, not the count. `chars`
+  attr (s9) and content inspection are the honest signals.
 
 ## Change History
 _Append only. Never delete entries._
@@ -399,3 +438,9 @@ _Append only. Never delete entries._
 | 2026-05-30 | 005 | toc_builder: `_drop_fuzzy_pageless_dupes` second pass in `_dedup_and_order` | ВКР: OCR drift («ИЗУЧЕНЯЯ»/«ИЗУЧЕНЯЮ») defeats exact-norm dedup; fuzzy ≥ 0.88 catches it |
 | 2026-05-30 | 005 | ocr_engine: `_extract_text_from_ocr_error` + `BadRequestError` branch | glm-ocr 400 «Failed to parse input» bodies contain the OCR'd text; recover instead of silent drop. 0e6e53b: 4 pages, 1757 chars recovered |
 | 2026-05-30 | 005 | .gitignore: exclude `test_v*/`, `tests_v*/`, `.audit_pages/`, `.claude/skills/` | Large baseline XML dirs and local Claude state shouldn't be tracked |
+| 2026-05-30 | 006 | LLM ToC numbering preserved (prompt + `_reattach_numerical_prefixes`); `merge_wrap_continuations`; `effective_real_sections` metric | LLM stripped «1.2.1»; heuristic split multi-line titles; hierarchical-shell honesty |
+| 2026-06-10 | 007–008 | Anchor-interpolation page_cut + ordering guard ADDED then found harmful | MIL-STD 5.1.2.5 bloat fix; but poisoned AI back-matter (cascade into index) |
+| 2026-06-27 | 009 | XML `chars` attr; REVERT anchor-interpolation → pure v6 linear page_cut | Content inspection (not count) showed anchor-interp net-negative; AI 169→184 |
+| 2026-06-27 | 011 | page_cut: stagger same-page sections (fix B) | Same-page page_cut got identical slice window → byte-identical duplicate content; dups 50→4 |
+| 2026-06-27 | 012 | `_pick_body_source` — pick body text by comparing candidates, not readability flag | ToC-OCR overrode full readable body on OCR-escalated docs; digital-design 24→97, systemic |
+| 2026-06-28 | 013 | `footer_junk_lines`/`strip_junk_lines`; per-page watermark strip from CONTENT (decoupled); 0.60 page-fraction | «Библиотека БГУИР» (787×) polluted content; full_text-strip churned page_cut; 0.30 deleted real content |
