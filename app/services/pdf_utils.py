@@ -20,6 +20,15 @@ PARTIAL_WORDS_MIN    = 4
 PARTIAL_GAP_MAX      = 15
 HEADER_JUNK_MIN_LEN  = 20
 HEADER_JUNK_MIN_REPEAT = 4
+# Per-page водяной знак / колонтитул: короткая строка, повторяющаяся почти на КАЖДОЙ
+# странице (напр. «Библиотека БГУИР» 16 симв 100% стр., «MIL-STD-1472G» 100%,
+# «Chapter» 82%). Удаляем строку длиной >= MIN_LEN, встречающуюся на > FRACTION стр.
+# Порог ВЫСОКИЙ (0.60) намеренно: повторяющийся КОНТЕНТ — метки кода parallelnoe
+# («Объявление» 39%, «Результат» 32%), названия округов в статтаблицах ВКР
+# («Дальневосточный» 31%) — встречается на МЕНЬШЕЙ доле страниц (≤39%) и не должен
+# удаляться. Разрыв 39%↔82% чистый, 0.60 их разделяет с запасом.
+HEADER_WATERMARK_PAGE_FRACTION = 0.60
+HEADER_WATERMARK_MIN_LEN = 5
 
 # Разделы, после которых отключается откат поиска к началу (во избежание
 # прыжка в алфавитный указатель, примечания и т.д.)
@@ -60,17 +69,53 @@ def get_clean_title(title: str) -> str:
     return clean
 
 
-def clean_footer_header(full_text: str) -> str:
+def footer_junk_lines(full_text: str, total_pages: int | None = None) -> set:
+    """Множество строк-колонтитулов/водяных знаков (для удаления из контента).
+
+    Две категории:
+      1. Длинные повторяющиеся строки (бегущие заголовки глав): len > 20, повтор > 4.
+      2. Короткие per-page водяные знаки: при известном total_pages — строка длиной
+         >= HEADER_WATERMARK_MIN_LEN, повторяющаяся на > HEADER_WATERMARK_PAGE_FRACTION
+         страниц. Закрывает «Библиотека БГУИР» (16 симв, на каждой странице), которую
+         длинный порог пропускал. Слова-стопы («и», «в», «на») остаются — короче и/или
+         на куда меньшей доле страниц.
+    """
     lines = full_text.split('\n')
     if len(lines) < 60:
-        return full_text
+        return set()
     counts: dict = {}
     for line in lines:
         s = line.strip()
-        if len(s) > HEADER_JUNK_MIN_LEN:
+        if s:
             counts[s] = counts.get(s, 0) + 1
-    junk = {line for line, cnt in counts.items() if cnt > HEADER_JUNK_MIN_REPEAT}
-    return "\n".join(line for line in lines if line.strip() not in junk)
+    watermark_min = (
+        int(total_pages * HEADER_WATERMARK_PAGE_FRACTION) if total_pages else None
+    )
+    junk = set()
+    for line, cnt in counts.items():
+        if len(line) > HEADER_JUNK_MIN_LEN and cnt > HEADER_JUNK_MIN_REPEAT:
+            junk.add(line)
+        elif (watermark_min and watermark_min > 0
+              and len(line) >= HEADER_WATERMARK_MIN_LEN and cnt >= watermark_min):
+            junk.add(line)
+    return junk
+
+
+def strip_junk_lines(text: str, junk: set) -> str:
+    """Удаляет из текста строки, входящие в множество junk (по stripped-значению)."""
+    if not junk or not text:
+        return text
+    return "\n".join(line for line in text.split('\n') if line.strip() not in junk)
+
+
+def clean_footer_header(full_text: str, total_pages: int | None = None) -> str:
+    """Убирает колонтитулы/водяные знаки из полного текста.
+
+    NB: при использовании в neural-парсере чистка применяется к КОНТЕНТУ секций
+    после нарезки (а не к full_text до маппинга), иначе изменение длины сдвигает
+    page_cut-позиции. См. footer_junk_lines + strip_junk_lines.
+    """
+    return strip_junk_lines(full_text, footer_junk_lines(full_text, total_pages))
 
 
 def fast_clean_chunk(text: str) -> str:

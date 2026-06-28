@@ -13,6 +13,8 @@ import fitz
 from .pdf_utils import (
     get_all_text,
     clean_footer_header,
+    footer_junk_lines,
+    strip_junk_lines,
     fast_clean_chunk,
     get_confidence_stats,
     check_document_readability,
@@ -173,8 +175,13 @@ async def parse_pdf_neural(
     # короткий; он не должен подменять полное читаемое тело из text-layer
     # (digital-design: 25k оглавления vs 1.5M тела → 94 секции уезжали в page_cut).
     full_text = _pick_body_source(get_all_text(doc), ocr_text)
-    full_text = clean_footer_header(full_text)
     total_pages = len(doc)
+    # Длинные бегущие колонтитулы убираем из full_text (как раньше). КОРОТКИЕ per-page
+    # водяные знаки («Библиотека БГУИР») НЕ трогаем здесь — иначе укорачивание текста
+    # сдвинет page_cut-позиции и поедет нарезка соседей. Их множество считаем сейчас и
+    # вычищаем из КОНТЕНТА каждой секции после нарезки (позиции остаются стабильными).
+    full_text = clean_footer_header(full_text)            # длинные колонтитулы
+    footer_junk = footer_junk_lines(full_text, total_pages)  # + короткие водяные знаки
 
     # --- Safety net: если ToC pipeline ничего не нашёл, но текст есть ---
     # Без секций XML был бы пуст. Возвращаем единственную секцию со всем
@@ -251,7 +258,9 @@ async def parse_pdf_neural(
             (m['start_idx'] for m in mapped if m['start_idx'] > start),
             default=len(full_text)
         )
-        raw_chunk = full_text[start:end].strip()
+        # Вычищаем per-page водяные знаки/колонтитулы из контента (позиции уже
+        # посчитаны на full_text с ними — нарезка соседей не сдвигается).
+        raw_chunk = strip_junk_lines(full_text[start:end], footer_junk).strip()
 
         if not raw_chunk:
             final_nodes.append({

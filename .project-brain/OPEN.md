@@ -32,7 +32,18 @@ _Last updated: 2026-06-27 session 009_
 - [ ] **digital-design residual: 46 page_cut** — OCR-extracted ToC titles don't string-match
   the text-layer body (1 truly lost, ~7 junk, 40 land in body). NEXT: fuzzy/OCR-aware match
   for the unmatched titles, now that the real body is searchable.
-- [ ] **12_100229: 120 page_cut** — separate (heuristic, never OCR-escalated). Untouched.
+- [x] **Mechanism 2 — per-page watermark removal (session 013).** «Библиотека БГУИР»
+  (787×) / «MIL-STD-1472G» (380×) stripped from section CONTENT (decoupled from mapping
+  positions → no churn). Threshold 0.60 of pages (protects content: parallelnoe code
+  labels, ВКР district names sit at ≤39%). 12_100229 БГУИР 45→0 previews, MIL-STD too.
+  real −8/−1 honest (junk-padded sections revealed <100). See session_013.
+- [ ] **12_100229 remaining junk (from user screenshots, NOT fixed):**
+  - M1: page_cut → front-matter ToC leader-dots (~10 early sections); body-start clamp.
+  - M3: page_cut absorbs big ToC block (8458 chars); same root as M1.
+  - Header+underscore-fill noise «…микросхемы____», short «Глава N» headers — need
+    normalize/pattern step (frequency won't catch).
+  - Spurious glossary/index sections («микроконтроллерах»→«и БИС»; «Приложение 2»→defs).
+  - Titles absent from body (only in ToC) → forced page_cut.
 - [ ] **Residual page_cut dups (4)** — non-same-page mechanism (page_cut lands on an
   exact section's content), nondeterministic. Low priority.
 - [x] **DECISION 1 (resolved): anchor-interpolation page_cut.** Verified finding:

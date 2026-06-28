@@ -277,6 +277,39 @@ class TestFooterHeader:
         text = "Короткий\nтекст\nкниги"
         assert clean_footer_header(text) == text
 
+    def test_removes_short_per_page_watermark(self):
+        """Механизм 2: короткий водяной знак на КАЖДОЙ странице (16 симв < порога 20)
+        удаляется при известном total_pages. Кейс «Библиотека БГУИР» (787× / 787 стр.)."""
+        pages = 100
+        lines = []
+        for i in range(pages):
+            lines.append("Библиотека БГУИР")            # 16 симв, на каждой странице
+            lines.append(f"Реальный текст параграфа номер {i} с содержанием книги.")
+            lines.append("и")                            # слово-стоп standalone
+        text = "\n".join(lines)
+        out = clean_footer_header(text, total_pages=pages)
+        assert "Библиотека БГУИР" not in out            # водяной знак убран
+        assert "Реальный текст параграфа номер 5" in out  # контент цел
+        assert "\nи\n" in out                            # короткое слово-стоп НЕ тронуто
+
+    def test_watermark_kept_without_total_pages(self):
+        """Без total_pages короткий знак не трогаем (обратная совместимость)."""
+        lines = ["Библиотека БГУИР", *[f"Строка {i}" for i in range(80)]] + ["Библиотека БГУИР"] * 40
+        text = "\n".join(lines)
+        out = clean_footer_header(text)  # без total_pages
+        assert "Библиотека БГУИР" in out
+
+    def test_rare_short_line_kept(self):
+        """Короткая строка на МАЛОЙ доле страниц не удаляется (порог 30%)."""
+        pages = 100
+        lines = []
+        for i in range(pages):
+            lines.append(f"Контентная строка параграфа {i}.")
+            if i % 10 == 0:                              # лишь 10% страниц
+                lines.append("Рисунок")                  # 7 симв, 10% << 30%
+        out = clean_footer_header("\n".join(lines), total_pages=pages)
+        assert "Рисунок" in out
+
 
 # ============================================================================
 # find_real_indices — маппинг с confidence
