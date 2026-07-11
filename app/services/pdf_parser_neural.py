@@ -1,46 +1,321 @@
+"""
+Гибридный neural-парсер PDF.
+
+Использует многоуровневые pipeline'ы из toc_builder и mapping_pipeline:
+  - ToC извлекается через каскад: эвристика → LLM → OCR → deep_scan → expand
+  - Маппинг секций: эвристика → page-hint → embedding → LLM → verify-order
+  - Очистка: алгоритм → LLM при низком confidence
+
+Сам файл — тонкий координатор, вся отказоустойчивая логика в _builder / _pipeline.
+"""
+
 import fitz
-import re
-from .pdf_utils import get_all_text, find_real_indices, clean_footer_header
-from .toc_parser import HeuristicParser, toc_to_linear_sequence
-from .llm_engine import llm_client
+from .pdf_utils import (
+    get_all_text,
+    clean_footer_header,
+    footer_junk_lines,
+    strip_junk_lines,
+    fast_clean_chunk,
+    get_confidence_stats,
+    check_document_readability,
+    detect_garbage_text,
+)
+from .llm_engine import llm_client, LLM_BOUNDARY_CONTEXT, scrub_foreign_script
+from .ocr_engine import ocr_client
+from .toc_builder import build_toc
+from .toc_validator import validate_toc_via_ocr
+from .mapping_pipeline import map_sequence, merge_wrap_continuations
 
 
-async def parse_pdf_neural(file_path, progress_callback=None) -> tuple:
+# Чанки с confidence НИЖЕ этого порога идут в LLM для очистки.
+# 0.85 — компромисс: exact (1.0), tokenized_regex (0.85), page_hint_exact (0.90)
+# идут через алгоритм (они надёжные); rescue-стратегии (0.40-0.80) и
+# partial / num_prefix идут через LLM, где это реально нужно.
+# Поднимать до 0.90+ не имеет смысла: LLM-clean часто возвращает оригинал
+# из-за context errors / CJK retry — зря тратит время без улучшения качества.
+CONFIDENCE_THRESHOLD = 0.85
+
+
+_GARBAGE_NOTICE = (
+    "[ДОКУМЕНТ НЕЧИТАЕМ]\n"
+    "Текст содержит артефакты плохого OCR или нечитаемый шрифт.\n"
+    "OCR через glm-ocr был запущен, но не смог восстановить текст."
+)
+
+
+def _pick_body_source(text_layer: str, ocr_text: str | None) -> str:
+    """Выбирает источник текста ТЕЛА для маппинга, сравнивая кандидатов напрямую.
+
+    Два возможных источника: текстовый слой PDF (`get_all_text`) и OCR-текст.
+    Решаем по ФАКТУ извлечённого текста, а не по readability-флагу (он считается
+    по выборке страниц и может ввести в заблуждение — front-matter читаем, тело —
+    скан, и наоборот).
+
+    Правило: text-layer — это настоящее тело, ЕСЛИ он читаем (не мусор) И покрывает
+    книгу не хуже OCR по объёму. Иначе берём OCR:
+      - 0e6e53b: text-layer — битый шрифт (is_garbage) → OCR (полный OCR тела).
+      - digital-design: text-layer чистый, 1.5M ≥ 25k OCR-оглавления → text-layer.
+      - 978: text-layer чистый, 169k ≥ OCR-оглавление → text-layer.
+      - обычная читаемая книга: ocr_text=None → text-layer.
+    """
+    text_layer = text_layer or ""
+    if not ocr_text or len(ocr_text.strip()) < 100:
+        return text_layer
+    if len(text_layer.strip()) < 100:
+        return ocr_text
+    # Качество text-layer на представительной выборке (начало + середина, чтобы
+    # не судить только по front-matter).
+    if len(text_layer) <= 40_000:
+        sample = text_layer
+    else:
+        mid = len(text_layer) // 2
+        sample = text_layer[:15_000] + text_layer[mid: mid + 15_000]
+    tl_garbage = detect_garbage_text(sample).get('is_garbage', False)
+    if not tl_garbage and len(text_layer) >= len(ocr_text):
+        return text_layer
+    return ocr_text
+
+
+async def parse_pdf_neural(
+    file_path: str,
+    progress_callback=None,
+    deep_scan: bool = True,
+    use_ocr: bool = True,
+    llm_expand: bool = True,
+    validate_toc_ocr: bool = True,
+) -> tuple:
+    """
+    Гибридный режим: многоуровневый pipeline с отказоустойчивыми fallback'ами.
+
+    Параметры:
+      deep_scan         — LLM-сканирование по chunks при отсутствии ToC (МЕДЛЕННО)
+      use_ocr           — разрешать OCR через glm-ocr для нечитаемых документов
+      llm_expand        — расширять верхнеуровневый ToC поиском глав внутри частей
+      validate_toc_ocr  — после извлечения ToC прогнать OCR ±5 стр. вокруг
+                          оглавления для верификации (стоит ~1 минуту, читаемые
+                          PDF; для OCR-derived ToC пропускается)
+
+    Возвращает (final_nodes, sequence, meta).
+    meta содержит: toc_source, deep_scan_used, ocr_used, toc_validation (опц).
+    """
     doc = fitz.open(file_path)
 
-    if progress_callback: await progress_callback(5, "Поиск оглавления...")
-    toc_raw = ""
-    for i in range(min(20, len(doc))): toc_raw += doc[i].get_text() + "\n"
-    parser = HeuristicParser()
-    toc_tree = parser.parse_toc(toc_raw)
-    sequence = toc_to_linear_sequence(toc_tree)
+    # --- Этап 0: проверка читаемости ---
+    if progress_callback:
+        await progress_callback(3, "Проверка читаемости документа...")
 
-    full_text = get_all_text(doc)
-    full_text = clean_footer_header(full_text)
-    mapped = find_real_indices(full_text, sequence)
+    readability = check_document_readability(doc)
+    print(f"[neural] Читаемость: {readability}")
 
+    ocr_text: str | None = None
+    if not readability['is_readable']:
+        if use_ocr and await ocr_client.is_available():
+            if progress_callback:
+                await progress_callback(5, "Документ нечитаем — запуск OCR через glm-ocr...")
+            try:
+                ocr_text = await ocr_client.ocr_document(doc, progress_callback=progress_callback)
+            except Exception as e:
+                print(f"[neural] OCR failed: {e}")
+                ocr_text = None
+
+        if not ocr_text or len(ocr_text.strip()) < 100:
+            doc.close()
+            if progress_callback:
+                await progress_callback(100, "Документ нечитаем, OCR не помог")
+            return [
+                {
+                    "title": "Ошибка чтения документа",
+                    "content": (
+                        f"{_GARBAGE_NOTICE}\n\n"
+                        f"Диагностика: {readability['detail']}\n"
+                        f"Доля мусорных символов: {readability['garbage_ratio']:.1%}"
+                    ),
+                    "level": 1,
+                    "page": 0,
+                    "confidence": 0.0,
+                }
+            ], [], {"toc_source": "none", "reason": "unreadable", "ocr_used": False}
+
+    # --- Этап 1: многоуровневое извлечение ToC ---
+    def _extract_full_text() -> str:
+        return ocr_text if ocr_text else get_all_text(doc)
+
+    sequence, toc_source, ocr_text = await build_toc(
+        doc,
+        full_text_extractor=_extract_full_text,
+        ocr_text=ocr_text,
+        progress_cb=progress_callback,
+        enable_ocr=use_ocr,
+        enable_deep_scan=deep_scan,
+        enable_llm_expand=llm_expand,
+    )
+
+    print(f"[neural] ToC source: {toc_source}, sections: {len(sequence)}")
+
+    # --- Этап 1b: опциональная OCR-валидация ToC ---
+    # Пропускаем когда ToC уже пришёл из OCR (тогда валидация = self-comparison).
+    toc_validation = None
+    if validate_toc_ocr and sequence and not toc_source.startswith('ocr'):
+        try:
+            toc_validation = await validate_toc_via_ocr(
+                doc, sequence, progress_cb=progress_callback
+            )
+            print(f"[neural] ToC validation: {toc_validation}")
+        except Exception as e:
+            print(f"[neural] ToC validation failed: {e}")
+            toc_validation = {"error": str(e)}
+
+    # --- Этап 2: полный текст и очистка колонтитулов ---
+    if progress_callback:
+        await progress_callback(15, "Подготовка полного текста...")
+
+    # Тело для маппинга: выбираем источник, СРАВНИВАЯ кандидатов напрямую
+    # (качество + покрытие), а не доверяя заранее-посчитанному readability-флагу.
+    # `ocr_text` из build_toc может быть лишь OCR страниц ОГЛАВЛЕНИЯ (escalation) —
+    # короткий; он не должен подменять полное читаемое тело из text-layer
+    # (digital-design: 25k оглавления vs 1.5M тела → 94 секции уезжали в page_cut).
+    full_text = _pick_body_source(get_all_text(doc), ocr_text)
+    total_pages = len(doc)
+    # Длинные бегущие колонтитулы убираем из full_text (как раньше). КОРОТКИЕ per-page
+    # водяные знаки («Библиотека БГУИР») НЕ трогаем здесь — иначе укорачивание текста
+    # сдвинет page_cut-позиции и поедет нарезка соседей. Их множество считаем сейчас и
+    # вычищаем из КОНТЕНТА каждой секции после нарезки (позиции остаются стабильными).
+    full_text = clean_footer_header(full_text)            # длинные колонтитулы
+    footer_junk = footer_junk_lines(full_text, total_pages)  # + короткие водяные знаки
+
+    # --- Safety net: если ToC pipeline ничего не нашёл, но текст есть ---
+    # Без секций XML был бы пуст. Возвращаем единственную секцию со всем
+    # текстом — пусть пользователь видит хоть какое-то содержимое и понимает
+    # что pipeline провалился именно на этапе извлечения структуры.
+    if not sequence and full_text and len(full_text.strip()) >= 100:
+        if progress_callback:
+            await progress_callback(95, "Структура не извлечена — возвращаем полный текст одной секцией")
+        doc.close()
+        return (
+            [{
+                "title": "Полный текст книги",
+                "content": full_text,
+                "level": 1,
+                "page": 0,
+                "confidence": 0.0,
+                "match_strategy": "fallback_full_text",
+            }],
+            [{"title": "Полный текст книги", "level": 1, "page": None}],
+            {
+                "toc_source": toc_source,
+                "deep_scan_used": deep_scan and "deep_scan" in toc_source,
+                "ocr_used": ocr_text is not None,
+                "fallback": "no_toc_extracted",
+            },
+        )
+
+    # --- Этап 3: многоуровневый маппинг ---
+    if progress_callback:
+        await progress_callback(20, f"Маппинг {len(sequence)} секций...")
+
+    mapped = await map_sequence(
+        sequence, full_text, total_pages, progress_callback,
+        toc_source=toc_source,
+    )
+    # Свернуть многострочные wrap-continuations: эвристика иногда режет один
+    # заголовок ToC на 2-3 пункта, и в теле они идут одной полосой → секции
+    # съедают тело друг друга. Здесь склеиваем title и удаляем дубль.
+    mapped, sequence = merge_wrap_continuations(mapped, sequence)
+    stats = get_confidence_stats(mapped)
+    print(f"[neural] Маппинг: {stats}")
+
+    # --- Этап 4: нарезка контента + очистка ---
     final_nodes = []
     total = len(mapped)
-
     for i, curr in enumerate(mapped):
+        confidence = curr['confidence']
+        title = curr['item']['title']
+
         if progress_callback:
-            pct = int(10 + (i / total) * 85)
-            await progress_callback(pct, f"Нейро-чистка: {curr['item']['title'][:30]}")
+            if confidence == 0.0:
+                mode_label = "⚠ не найдено"
+            elif confidence >= CONFIDENCE_THRESHOLD:
+                mode_label = f"алгоритм [{curr['match_strategy']}]"
+            else:
+                mode_label = f"LLM [{curr['match_strategy']} conf={confidence:.2f}]"
+            pct = int(30 + (i / max(total, 1)) * 65)
+            await progress_callback(pct, f"{mode_label}: {title[:40]}")
 
-        start, end = curr['end_idx'], (mapped[i + 1]['start_idx'] if i + 1 < len(mapped) else len(full_text))
-        raw_chunk = full_text[start:end].strip()
+        if curr['start_idx'] == -1:
+            final_nodes.append({
+                "title": title,
+                "content": "",
+                "level": curr['item'].get('level', 1),
+                "page": curr['item'].get('page', 0),
+                "confidence": 0.0,
+                "match_strategy": curr.get('match_strategy', 'not_found'),
+            })
+            continue
 
-        if len(raw_chunk) > 10:
-            clean_content = await llm_client.process_large_text(raw_chunk, is_start=False)
+        # Текст-окно от конца этой секции до начала следующей в текстовом порядке
+        start = curr['end_idx']
+        end = min(
+            (m['start_idx'] for m in mapped if m['start_idx'] > start),
+            default=len(full_text)
+        )
+        # Вычищаем per-page водяные знаки/колонтитулы из контента (позиции уже
+        # посчитаны на full_text с ними — нарезка соседей не сдвигается).
+        raw_chunk = strip_junk_lines(full_text[start:end], footer_junk).strip()
+
+        if not raw_chunk:
+            final_nodes.append({
+                "title": title,
+                "content": "",
+                "level": curr['item'].get('level', 1),
+                "page": curr['item'].get('page', 0),
+                "confidence": confidence,
+                "match_strategy": curr.get('match_strategy', ''),
+            })
+            continue
+
+        # Очистка: алгоритм или LLM в зависимости от confidence
+        if confidence >= CONFIDENCE_THRESHOLD or curr.get('match_strategy') == 'page_cut':
+            # page_cut: заголовок отсутствует в тексте, позиция приблизительная —
+            # boundary detection бессмысленен, fast_clean достаточно.
+            clean_content = fast_clean_chunk(raw_chunk)
         else:
-            clean_content = ""
+            boundary_offset = await llm_client.fix_chapter_boundary(
+                title, raw_chunk[:LLM_BOUNDARY_CONTEXT]
+            )
+            adjusted = boundary_offset > 0 and boundary_offset < len(raw_chunk)
+            if adjusted:
+                raw_chunk = raw_chunk[boundary_offset:]
+            clean_content = (
+                await llm_client.process_large_text(raw_chunk, is_start=not adjusted)
+                if len(raw_chunk) > 10
+                else ""
+            )
 
+        # Финальный CJK-scrub независимо от пути очистки (fast_clean не чистит
+        # иероглифы, а источник 动机 — сам OCR-текст). Latin не трогаем.
         final_nodes.append({
-            "title": curr['item']['title'],
-            "content": clean_content,
+            "title": scrub_foreign_script(title),
+            "content": scrub_foreign_script(clean_content),
             "level": curr['item'].get('level', 1),
-            "page": curr['item'].get('page', 0)
+            "page": curr['item'].get('page', 0),
+            "confidence": confidence,
+            "match_strategy": curr.get('match_strategy', ''),
         })
 
+    if progress_callback:
+        await progress_callback(97, "Формирование XML...")
+
+    # Скраб CJK в title'ах sequence — NavigationTable строится из него
+    for s in sequence:
+        if s.get('title'):
+            s['title'] = scrub_foreign_script(s['title'])
+
     doc.close()
-    return final_nodes, sequence
+    meta = {
+        "toc_source": toc_source,
+        "deep_scan_used": deep_scan and "deep_scan" in toc_source,
+        "ocr_used": ocr_text is not None,
+    }
+    if toc_validation is not None:
+        meta["toc_validation"] = toc_validation
+    return final_nodes, sequence, meta
