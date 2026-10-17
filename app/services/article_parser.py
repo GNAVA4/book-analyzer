@@ -28,6 +28,11 @@ import fitz
 # --- Пороги вёрстки (в pt). Подобраны на 5 статьях articles/ (2026-10-17). ---
 NOISE_BAND_FRACTION = 0.09      # верх/низ страницы, где живут колонтитулы
 SAME_LINE_DY = 2.0              # строки ближе по вертикали — одна строка (выключка)
+# Двухколоночная страница: промежуток, разделяющий ≥40% рядов страницы (и не меньше 8).
+# В одноколоночном тексте случайный x попадает в пробел между словами примерно в 10–20%
+# рядов; в двух колонках — почти во всех, кроме рядов во всю ширину (шапка, рисунки).
+COLUMN_ROW_SHARE = 0.4
+COLUMN_MIN_ROWS = 8
 PARA_GAP_FACTOR = 1.6           # интервал > 1.6 × обычного → новый абзац
 INDENT_MIN, INDENT_MAX = 6, 60  # абзацный отступ первой строки
 SHORT_LINE_SLACK = 40           # строка короче правого поля на 40pt → конец абзаца
@@ -174,6 +179,53 @@ def _repair_text(text: str) -> str:
     return _LETTER_SPACED.sub(lambda m: m.group(0).replace(' ', ''), text)
 
 
+def _find_gutter(rows: list, width: float):
+    """x межколонного промежутка или None. Строка (ряд фрагментов одной высоты) «за колонки»,
+    если в ней есть текст слева и справа от x, а сам x не накрыт ни одним фрагментом. В
+    одноколоночном тексте такой x случаен (пробел между словами) и набирает мало рядов."""
+    if len(rows) < COLUMN_MIN_ROWS:
+        return None
+    best, best_x = 0, None
+    for x in range(int(width * 0.3), int(width * 0.7)):
+        score = 0
+        for row in rows:
+            left = right = False
+            for b, _ in row:
+                if b[0] < x < b[2]:
+                    break
+                left |= b[2] <= x
+                right |= b[0] >= x
+            else:
+                score += left and right
+        if score > best:
+            best, best_x = score, x
+    if best >= COLUMN_MIN_ROWS and best >= COLUMN_ROW_SHARE * len(rows):
+        return best_x
+    return None
+
+
+def _column_order(rows: list, width: float) -> list:
+    """Ряды → части строк в порядке чтения. Двухколоночный участок (ряды, не накрывающие
+    промежуток) читается сначала левой колонкой, потом правой; ряд во всю ширину (название,
+    подпись под широким рисунком) разрывает участок."""
+    g = _find_gutter(rows, width)
+    if g is None:
+        return rows
+    out, left, right = [], [], []
+    for row in rows:
+        if any(b[0] < g < b[2] for b, _ in row):
+            out += left + right + [row]
+            left, right = [], []
+            continue
+        lpart = [f for f in row if f[0][2] <= g]
+        rpart = [f for f in row if f[0][0] >= g]
+        if lpart:
+            left.append(lpart)
+        if rpart:
+            right.append(rpart)
+    return out + left + right
+
+
 def extract_lines(doc) -> tuple[list, dict]:
     lines, geo = [], {}
     for pi, page in enumerate(doc):
@@ -183,16 +235,21 @@ def extract_lines(doc) -> tuple[list, dict]:
                 spans = [s for s in l['spans'] if s['text'].strip()]
                 if spans:
                     raw.append((l['bbox'], spans))
-        # склейка строк одной высоты (выключка по ширине дробит строку на слова)
+        # склейка строк одной высоты (выключка по ширине дробит строку на слова) — в пределах
+        # колонки: в двухколоночной вёрстке строки левой и правой колонки на одной высоте
+        # иначе сливались в одну («социально-эконо- данные, разделен…», session 020)
         raw.sort(key=lambda r: (round(r[0][1]), r[0][0]))
-        merged = []
+        rows = []
         for bbox, spans in raw:
-            if merged and abs(merged[-1][0][1] - bbox[1]) <= SAME_LINE_DY:
-                mb, ms = merged[-1]
-                merged[-1] = ((min(mb[0], bbox[0]), min(mb[1], bbox[1]),
-                               max(mb[2], bbox[2]), max(mb[3], bbox[3])), ms + spans)
+            if rows and abs(rows[-1][0][0][1] - bbox[1]) <= SAME_LINE_DY:
+                rows[-1].append((bbox, spans))
             else:
-                merged.append((bbox, list(spans)))
+                rows.append([(bbox, spans)])
+        merged = []
+        for part in _column_order(rows, page.rect.width):
+            bbox = (min(b[0] for b, _ in part), min(b[1] for b, _ in part),
+                    max(b[2] for b, _ in part), max(b[3] for b, _ in part))
+            merged.append((bbox, [s for _, ss in part for s in ss]))
         for bbox, spans in merged:
             xs = sorted((s['bbox'][0], s['bbox'][2]) for s in spans)
             max_gap = max((b[0] - a[1] for a, b in zip(xs, xs[1:])), default=0.0)
@@ -577,6 +634,19 @@ def assign_zones(paras: list, body_size: float) -> dict:
     refs_idx = next((i for i, p in enumerate(paras) if _A_REFS.match(p.text)
                      and (p.heading or len(p.text) < 120)), None)
 
+    # аннотация и ключевые слова В КОНЦЕ, после литературы («Доклады АМАН»: тело → ЛИТЕРАТУРА →
+    # ABSTRACT/Key words → АННОТАЦИЯ/Ключевые слова). Иначе шапкой считалось всё до ключевых
+    # слов — вместе с телом (15 из 50 статей КиберЛенинки, session 020). Шапка в начале тогда —
+    # только название и авторы (ветка «без меток»), а хвостовой блок разбираем отдельно.
+    tail_start = tail_abs = tail_kw = None
+    if (refs_idx is not None and kw_idx is not None and refs_idx < kw_idx
+            and (abs_idx is None or refs_idx < abs_idx)):
+        tail_abs, tail_kw = abs_idx, kw_idx
+        tail_start = next((i for i in range(refs_idx + 1, n)
+                           if _A_ABSTRACT_EN.match(paras[i].text) or _A_ABSTRACT.match(paras[i].text)
+                           or i == kw_idx), kw_idx)
+        kw_idx = abs_idx = None
+
     # конец шапки: после ключевых слов + англ. дублей / «Для цитирования»
     front_end = 0
     if kw_idx is not None:
@@ -605,7 +675,7 @@ def assign_zones(paras: list, body_size: float) -> dict:
                     _NAME.search(paras[front_end].text) or _AFFIL.search(paras[front_end].text)):
                 front_end += 1
             j, chars = front_end, 0
-            while (j < n and j - front_end < 3 and _latin_ratio(paras[j].text) <= 0.5
+            while (tail_start is None and j < n and j - front_end < 3 and _latin_ratio(paras[j].text) <= 0.5
                    and not paras[j].heading):
                 chars += len(paras[j].text)
                 j += 1
@@ -613,8 +683,10 @@ def assign_zones(paras: list, body_size: float) -> dict:
                     unlabeled_abstract = list(range(front_end, j))
                     front_end = j
                     break
-            while front_end < n and (_latin_ratio(paras[front_end].text) > 0.5
-                                     or _ANCHOR_START.match(paras[front_end].text)):
+            # англ. блок после русской шапки; при аннотации в конце его здесь нет, а латиница
+            # в начале тела — формулы («∂y = 0, 0 < γ < 1»), их не отрезаем
+            while tail_start is None and front_end < n and (_latin_ratio(paras[front_end].text) > 0.5
+                                                            or _ANCHOR_START.match(paras[front_end].text)):
                 front_end += 1
     if refs_idx is None:
         refs_idx = _unlabeled_refs_start(paras, front_end)
@@ -681,9 +753,26 @@ def assign_zones(paras: list, body_size: float) -> dict:
             if len(p.text) < 300:
                 p.role = 'authors'
 
+    # --- хвостовая шапка (аннотация/ключевые слова после литературы) ---
+    tail_end = n
+    if tail_start is not None:
+        tail_end = tail_start
+        for p in paras[tail_start:]:
+            p.role = 'back'
+        if tail_abs is not None:
+            j, texts = tail_abs, []
+            while j < n and j != tail_kw:
+                texts.append(paras[j].text)
+                paras[j].role = 'abstract'
+                j += 1
+            meta['abstract'] = _strip_label(_A_ABSTRACT, ' '.join(texts))
+        paras[tail_kw].role = 'keywords'
+        raw = _strip_label(_A_KEYWORDS, paras[tail_kw].text)
+        meta['keywords'] = [k.strip(' .') for k in re.split(r'[;,]', raw) if k.strip(' .')]
+
     # --- хвост ---
     refs, other = [], []
-    for p in paras[back_start:]:
+    for p in paras[back_start:tail_end]:
         if _A_AUTHORS_INFO.match(p.text) or _A_RECEIVED.match(p.text):
             p.role = 'back'
             other.append(p)

@@ -373,6 +373,21 @@ are invoked SEQUENTIALLY (GPU ≤90%). `_llm_from_text_retry` retries up to 3× 
   отсутствующая строка = «не оценено».
 - Методика и формулы всех метрик — `docs/semantic_methods.md`.
 
+### Сервис анализа статей (session 020, ADR 005)
+```
+PDF ─→ article_parser ─→ make_chunks(+paras) ─→ Embedder ─┐
+                                                          ├→ article_report.analyze_article
+data/corpus.db (CorpusStore): corpus ─< document(area) ─< chunk(emb) ─→ index (numpy)
+      predict_area (kNN по размеченным всех корпусов) → neighbours (scope topic|nearest|corpus)
+article_report → {area, neighbours, paragraphs[sim, novelty, support, nearest, repeats, verbatim],
+                  sections[агрегаты], summary} → app/article_api.py (/api/...) → static/article.html
+```
+- `app/analysis/corpus.py` — хранилище/индекс; `app/analysis/article_report.py` — разбор по абзацам;
+  `app/article_api.py` — /api/corpora, /api/corpora/{name}/documents, /api/areas,
+  POST /api/article/analyze, GET /api/corpus-document/{id}; страница `/article.html`.
+- Метрики по фрагментам → показываются по абзацам; опора SUPPORT_SIM=0.56 (калибровка session 020).
+- Парсер: двухколоночная вёрстка (`_find_gutter`, `_column_order`), аннотация после литературы.
+
 ### app/analysis/lexical.py (session 014)
 - Шинглы по 5 «основ» (первые 6 букв), containment между абзацами (асимметричный) → почти
   дословные повторы внутри статьи и между статьями; доля текста, повторённого в корпусе;
@@ -508,3 +523,4 @@ _Append only. Never delete entries._
 | 2026-10-17 | 014 | ЭТАП 2: `article_parser.py` (статья без оглавления, по вёрстке) + `app/analysis/lexical.py` | Новая задача — семантический анализ статей (ADR 004); статьи грузятся поодиночке |
 | 2026-10-17 | 015 | article_parser: режим «старый журнал» (опора на название); `app/analysis/semantic.py` (эмбеддинги); numpy | 18/20 статей КиберЛенинки ломали шапку; пересказ не ловится шинглами |
 | 2026-10-17 | 016–017 | язык статьи, литература без номеров; `app/analysis/claims.py` (LLM-утверждения); docs/semantic_methods.md | статьи КИМ; «вода» не ловится эмбеддингами |
+| 2026-10-18 | 020 | Сервис статей: CorpusStore (SQLite), article_report, article_api, static/article.html; парсер — колонки и аннотация в конце | Переход от скриптов к сервису; ADR 005 |

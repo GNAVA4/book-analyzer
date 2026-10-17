@@ -1,5 +1,5 @@
 # PROJECT CONTEXT — Book Analyzer
-_Updated: 2026-10-17 session 019_
+_Updated: 2026-10-18 session 020_
 
 ## What this project is
 Этап 1 (готов, приемлемое качество): парсер книг PDF/DOCX/TXT → XML-дерево (оглавление + содержимое
@@ -51,12 +51,19 @@ qwen2.5-7b-instruct (ctx 8192), glm-ocr, text-embedding-qwen3-embedding-0.6b.
 - Session 019: проверка на противоречия — эмбеддинговая новизна ≈ одиночество статьи в корпусе
   (ρ = −0.92 со сходством ближайшей), с «водой» не связана (ρ = 0.03 по абзацам): вода на редкую
   тему выглядит «новой». В отчёте раздел «Согласованность метрик»; переопределение новизны — на решение user.
+- Session 020: **сервис**. Именованные корпуса в SQLite (data/corpus.db), тема документа = область
+  наук (метка рубрики или kNN-авто), сравнение с 10 ближайшими той же темы, опора SUPPORT_SIM=0.56.
+  Страница /article.html: абзацы с раскраской, карточка абзаца (ближайший текст корпуса, повторы,
+  дословные). Корпуса: «КиберЛенинка» 119 (7 областей, articles_cl/), «Статьи этапа 2» 31.
+  Парсер: двухколоночная вёрстка, аннотация после литературы. Тема LOO 75%; области слишком
+  крупные для новизны — нужны плотные корпуса ([[insight_2026-10-18_area-level-corpus-too-coarse-for-novelty]]).
 
 ## Decisions that affect ALL code
 Этап 2 [ADR 004]: новизна = ДВА числа (покрытие эталона + «сверх эталона») [user]; единица —
 атомарные утверждения; только русский [user]; только локальные модели [user]; детекция ИИ — не цель,
 стилистические сигналы — нужны [user]; анализ — отдельный слой после парсинга [inferred];
 статьи грузятся ПООДИНОЧКЕ, без архитектуры под сборник [user].
+Сервис [ADR 005]: корпуса ИМЕНОВАННЫЕ [user], сравнение внутри темы [user], страница отдельная [user].
 
 Этап 1 (действуют):
 - CONFIDENCE_THRESHOLD=0.85 (ADR 001); все флаги ON (ADR 002); LLM-оглавление только после
@@ -69,7 +76,7 @@ qwen2.5-7b-instruct (ctx 8192), glm-ocr, text-embedding-qwen3-embedding-0.6b.
 ## Known landmines ⚠️
 - **Правки кода через Bash: `\\b` превращается в backspace** → только Edit/Write
   ([[insight_2026-10-17_bash-tool-unescapes-backslash-b]]).
-- **pytest целиком: `NO_PROXY='*'`** — системный прокси Windows (socks4) ломает импорт openai.
+- **pytest целиком и uvicorn: `NO_PROXY='*'`** — системный прокси Windows (socks4) ломает импорт openai.
   HTTP к LM Studio из своего кода — httpx с `trust_env=False`.
 - `requirements.txt` в кодировке UTF-16 — дописывать с сохранением кодировки.
 - Новизна зависит от корпуса: статья без близких соседей выглядит «новой» — нужна пометка
@@ -83,6 +90,8 @@ qwen2.5-7b-instruct (ctx 8192), glm-ocr, text-embedding-qwen3-embedding-0.6b.
 - Мелкий кегль в статьях не выкидывать до разметки зон (аннотация бывает 7–8pt).
 
 ## Key file map
+- `app/analysis/corpus.py`, `app/analysis/article_report.py`, `app/article_api.py`, `static/article.html` — сервис статей (session 020)
+- `scripts/fetch_cyberleninka.py`, `scripts/corpus_build.py`, `scripts/corpus_calibrate.py` — корпус
 - `app/services/article_parser.py` — парсер статьи (этап 2)
 - `app/analysis/lexical.py` — лексический слой анализа (этап 2)
 - `app/analysis/semantic.py` — смысловой слой (эмбеддинги, coverage/novelty/повторы)
@@ -92,4 +101,4 @@ qwen2.5-7b-instruct (ctx 8192), glm-ocr, text-embedding-qwen3-embedding-0.6b.
 - `app/services/pdf_parser_neural.py` — координатор книжного пайплайна
 - `app/services/toc_builder.py`, `mapping_pipeline.py`, `pdf_utils.py`, `xml_builder.py` — этап 1
 - `scripts/run_corpus.py` — прогон корпуса книг (OUT_DIR)
-- `tests/` — 366 тестов
+- `tests/` — 382 теста

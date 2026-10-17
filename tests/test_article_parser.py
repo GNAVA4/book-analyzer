@@ -1,7 +1,7 @@
 """Тесты правил парсера статей (app/services/article_parser.py) на синтетических строках."""
 from app.services.article_parser import (
     Line, Para, _find_title_idx, _join, _plausible_heading, _repair_text, _RUNIN_KNOWN,
-    _unlabeled_refs_start, assign_zones, build_paragraphs, mark_noise, split_articles,
+    _column_order, _unlabeled_refs_start, assign_zones, build_paragraphs, mark_noise, split_articles,
 )
 
 
@@ -79,6 +79,60 @@ class TestNoKeywordsJournal:
 
     def test_references_without_heading(self):
         assert _unlabeled_refs_start(self.paras(), 5) == 7
+
+
+class TestColumns:
+    @staticmethod
+    def row(y, *xs):
+        return [((x0, y, x1, y + 10), [{'text': f'{x0}'}]) for x0, x1 in xs]
+
+    def test_two_columns_read_left_then_right(self):
+        rows = [self.row(50, (50, 550))]                                  # название во всю ширину
+        rows += [self.row(100 + 12 * i, (50, 290), (310, 550)) for i in range(10)]
+        order = _column_order(rows, 600)
+        xs = [part[0][0][0] for part in order]
+        assert xs == [50] + [50] * 10 + [310] * 10
+
+    def test_justified_single_column_untouched(self):
+        # выключка: слова — отдельные фрагменты, пробелы в случайных местах
+        import random
+        rnd = random.Random(1)
+        rows = []
+        for i in range(20):
+            x, row = 50, []
+            while x < 540:
+                w = rnd.randint(30, 90)
+                row.append(((x, 100 + 12 * i, x + w, 110 + 12 * i), [{'text': 'w'}]))
+                x += w + 5
+            rows.append(row)
+        assert _column_order(rows, 600) is rows
+
+
+class TestTrailingHeader:
+    """«Доклады АМАН»: аннотация и ключевые слова ПОСЛЕ литературы — тело не уходит в шапку."""
+    def paras(self):
+        return [
+            TP('УДК 517.95'),
+            TP('О единственности решения задачи Дирихле', size=14.3),
+            TP('Масаева О.Х.'),
+            TP('Рассмотрим уравнение второго порядка с дробной производной. ' * 10),
+            TP('В данной работе доказывается единственность решения задачи. ' * 10),
+            TP('ЛИТЕРАТУРА'),
+            TP('1. Нахушев А.М. Дробное исчисление и его применение. – М.: Физматлит, 2003.'),
+            TP('ABSTRACT'),
+            TP('The uniqueness of the solution of the Dirichlet problem is proved.'),
+            TP('АННОТАЦИЯ'),
+            TP('Доказана единственность решения задачи Дирихле.'),
+            TP('Ключевые слова: задача Дирихле, дробная производная.'),
+        ]
+
+    def test_body_and_tail_meta(self):
+        res = assign_zones(self.paras(), 12.0)
+        assert res['meta']['title'] == 'О единственности решения задачи Дирихле'
+        assert len(res['sections']) == 1 and len(res['sections'][0]['paragraphs']) == 2
+        assert 'единственность решения задачи Дирихле' in res['meta']['abstract']
+        assert res['meta']['keywords'] == ['задача Дирихле', 'дробная производная']
+        assert len(res['meta']['references']) == 1     # англ. аннотация в литературу не попала
 
 
 class TestRunIn:

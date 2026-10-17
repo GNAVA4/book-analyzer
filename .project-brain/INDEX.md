@@ -1,5 +1,5 @@
 # MEMORY INDEX — Book Analyzer
-_Updated: 2026-10-17 session 015_
+_Updated: 2026-10-18 session 020_
 
 ## By topic
 | Topic | Files |
@@ -8,6 +8,7 @@ _Updated: 2026-10-17 session 015_
 | парсер статей | session_014, plan_001 (фаза 1a) |
 | лексический анализ (повторы, самоцитирование) | session_014, plan_001 (фаза 1b-лекс) |
 | смысловой анализ (эмбеддинги, новизна, самоповтор) | session_015, insight_2026-10-17_paraphrased-self-repetition, plan_001 (фаза 1b) |
+| сервис: корпуса, тема, страница по абзацам | session_020, adr_005, insight_2026-10-18_area-level-corpus-too-coarse-for-novelty |
 | методика и формулы | docs/semantic_methods.md, session_017 |
 | согласованность метрик, новизна | session_019, insight_2026-10-17_novelty-is-isolation-not-content |
 | уровень утверждений (LLM), «вода» | session_017, insight_2026-10-17_qwen36-thinking-off-via-completions, app/analysis/claims.py |
@@ -42,6 +43,7 @@ _Updated: 2026-10-17 session 015_
 | 017 | 2026-10-17 | методика с формулами (docs/semantic_methods.md); уровень утверждений на qwen3.6-35b-a3b |
 | 018 | 2026-10-17 | утверждения по половине корпуса (18 статей); «вода» по статьям в отчёте |
 | 019 | 2026-10-17 | проверка метрик на противоречия: новизна ≈ одиночество, не связана с водой |
+| 020 | 2026-10-18 | сервис: именованные корпуса (SQLite), тема, анализ по абзацам, /article.html; 145 статей КиберЛенинки; парсер — колонки |
 
 ## Plans
 | # | Title | Status |
@@ -55,6 +57,7 @@ _Updated: 2026-10-17 session 015_
 | 002 | Все флаги пайплайна ON по умолчанию | active |
 | 003 | Умный LLM/OCR-fallback оглавления с валидацией | active |
 | 004 | Этап 2 — семантический анализ отдельным слоем | active |
+| 005 | Именованные корпуса, тема документа, сравнение внутри темы | active |
 
 ## Open bugs index
 Открытых багов с файлами нет; остаточные проблемы этапа 1 — в OPEN.md.

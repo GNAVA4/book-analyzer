@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Анализ статьи</title>
+<style>
+:root{
+  --bg:#f6f5f2; --panel:#fff; --ink:#1d1f23; --muted:#6b6f76; --line:#e3e1dc;
+  --accent:#2f5bd3; --accent-soft:#e7edfc; --warn:#b5651d; --warn-soft:#fbefe3;
+  --bad:#b8323a; --bad-soft:#fbe6e7; --ok:#2e7d4f; --ok-soft:#e3f3e9; --none:#9aa0a6;
+  --sel:#fff7d6;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#15171a; --panel:#1e2125; --ink:#e7e8ea; --muted:#9aa0a6; --line:#2e3238;
+  --accent:#7d9cf0; --accent-soft:#232c42; --warn:#e0a060; --warn-soft:#3a2d1f;
+  --bad:#ec7a80; --bad-soft:#3d2326; --ok:#6cc792; --ok-soft:#1f3328; --none:#6b6f76; --sel:#3a3520;
+}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{background:var(--panel);border-bottom:1px solid var(--line);padding:12px 20px;display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;position:sticky;top:0;z-index:5}
+header h1{font-size:17px;margin:0 12px 0 0}
+label{font-size:13px;color:var(--muted);display:flex;gap:6px;align-items:center}
+select,input[type=file],button{font:inherit;font-size:14px}
+select{padding:4px 6px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink)}
+button{padding:6px 14px;border-radius:6px;border:1px solid var(--accent);background:var(--accent);color:#fff;cursor:pointer}
+button.ghost{background:transparent;color:var(--accent)}
+button:disabled{opacity:.5;cursor:default}
+main{display:grid;grid-template-columns:300px minmax(0,1fr) 380px;gap:16px;padding:16px 20px;align-items:start}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px}
+aside{position:sticky;top:76px;max-height:calc(100vh - 92px);overflow:auto}
+h2{font-size:14px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin:14px 0 8px}
+h2:first-child{margin-top:0}
+.muted{color:var(--muted)} .small{font-size:13px}
+.tiles{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.tile{border:1px solid var(--line);border-radius:8px;padding:8px}
+.tile b{display:block;font-size:20px}
+.tile span{font-size:12px;color:var(--muted)}
+.doclist div{padding:6px 4px;border-bottom:1px solid var(--line);font-size:13px;cursor:pointer}
+.doclist div:hover{background:var(--accent-soft)}
+.tag{display:inline-block;font-size:11px;padding:1px 6px;border-radius:10px;background:var(--accent-soft);color:var(--accent);margin-right:4px}
+.tag.auto{background:var(--warn-soft);color:var(--warn)}
+.metrics button{margin:0 4px 4px 0;padding:3px 10px;font-size:13px}
+.legend{display:flex;flex-wrap:wrap;gap:6px 12px;font-size:12px;color:var(--muted);margin-top:6px}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:3px;vertical-align:-2px;margin-right:4px}
+article h1{font-size:22px;line-height:1.3;margin:0 0 6px}
+article h3{font-size:16px;margin:22px 0 8px;display:flex;justify-content:space-between;gap:12px}
+article h3 small{font-weight:400;color:var(--muted);font-size:12px;white-space:nowrap}
+.p{position:relative;padding:6px 10px 6px 16px;margin:4px 0;border-radius:6px;cursor:pointer;border-left:6px solid var(--none)}
+.p:hover{background:var(--accent-soft)}
+.p.sel{background:var(--sel)}
+.p .badges{float:right;display:flex;gap:3px;margin:2px 0 4px 8px}
+.b{font-size:10px;padding:0 5px;border-radius:8px;font-weight:600}
+.b.rep{background:var(--warn-soft);color:var(--warn)}
+.b.verb{background:var(--bad-soft);color:var(--bad)}
+.b.nos{background:var(--line);color:var(--muted)}
+.p.formula{font-family:ui-monospace,monospace;font-size:12px;color:var(--muted)}
+.card dl{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;margin:0;font-size:14px}
+.card dt{color:var(--muted)} .card dd{margin:0}
+.quote{border-left:3px solid var(--accent);padding:6px 10px;background:var(--accent-soft);border-radius:4px;font-size:13px;margin:6px 0}
+.quote.bad{border-color:var(--bad);background:var(--bad-soft)}
+a{color:var(--accent)}
+.bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden;margin-top:2px}
+.bar i{display:block;height:100%;background:var(--accent)}
+.sec{font-size:13px;padding:4px 0;cursor:pointer}
+.empty{padding:40px;text-align:center;color:var(--muted)}
+.err{color:var(--bad)}
+@media (max-width:1100px){main{grid-template-columns:1fr} aside{position:static;max-height:none}}
+@media (max-width:600px){header,main{padding-left:16px;padding-right:16px}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Анализ статьи</h1>
+  <label>Корпус <select id="corpus"></select></label>
+  <label>Сравнивать с <select id="scope">
+    <option value="topic">той же темой (10 ближайших)</option>
+    <option value="nearest">10 ближайшими во всём корпусе</option>
+    <option value="corpus">всем корпусом</option>
+  </select></label>
+  <label>Тема <select id="area"><option value="">авто</option></select></label>
+  <input type="file" id="file" accept=".pdf">
+  <label><input type="checkbox" id="add"> добавить в корпус</label>
+  <button id="go">Анализировать</button>
+  <span id="status" class="small muted"></span>
+</header>
+<main>
+  <aside class="panel" id="left">
+    <h2>Документы корпуса</h2>
+    <div class="small muted">Щелчок — анализ документа относительно остального корпуса.</div>
+    <div class="doclist" id="docs"></div>
+  </aside>
+  <article class="panel" id="doc"><div class="empty">Загрузите PDF статьи или выберите документ корпуса слева.</div></article>
+  <aside class="panel card" id="card"><div class="muted small">Щёлкните по абзацу, чтобы увидеть подробности.</div></aside>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const pct = x => x == null ? '—' : Math.round(x * 100) + '%';
+let R = null, metric = 'novelty', docsCache = [];
+
+async function api(url, opts) {
+  const r = await fetch(url, opts);
+  if (!r.ok) { let d; try { d = (await r.json()).detail } catch { d = r.statusText } throw new Error(d) }
+  return r.json();
+}
+
+async function loadCorpora() {
+  const cs = await api('/api/corpora');
+  $('corpus').innerHTML = cs.map(c => `<option value="${esc(c.name)}">${esc(c.name)} (${c.documents})</option>`).join('');
+  const areas = await api('/api/areas');
+  $('area').innerHTML = '<option value="">авто</option>' + areas.map(a => `<option>${esc(a)}</option>`).join('');
+  if (cs.length) loadDocs();
+}
+
+async function loadDocs() {
+  docsCache = await api('/api/corpora/' + encodeURIComponent($('corpus').value) + '/documents');
+  let html = '', last = null;
+  for (const d of docsCache) {
+    if (d.area !== last) { html += `<h2>${esc(d.area || 'без темы')}</h2>`; last = d.area }
+    html += `<div data-id="${d.id}">${esc(d.title || d.name)} <span class="muted">${d.year || ''}</span>
+      ${d.area_source === 'auto' ? `<span class="tag auto">авто ${pct(d.area_conf)}</span>` : ''}</div>`;
+  }
+  $('docs').innerHTML = html || '<div class="muted">Корпус пуст</div>';
+  $('docs').onclick = onDocsClick;
+}
+
+$('corpus').onchange = loadDocs;
+async function onDocsClick(e) {
+  const el = e.target.closest('[data-id]'); if (!el) return;
+  await run(() => api(`/api/corpus-document/${el.dataset.id}?corpus=${encodeURIComponent($('corpus').value)}&scope=${$('scope').value}`));
+}
+$('go').onclick = async () => {
+  const f = $('file').files[0]; if (!f) { $('status').textContent = 'Выберите PDF'; return }
+  const fd = new FormData();
+  fd.append('file', f); fd.append('corpus', $('corpus').value); fd.append('scope', $('scope').value);
+  fd.append('area', $('area').value); fd.append('add', $('add').checked);
+  await run(() => api('/api/article/analyze', {method: 'POST', body: fd}));
+  if ($('add').checked) loadCorpora();
+};
+
+async function run(fn) {
+  $('go').disabled = true; $('status').textContent = 'Анализ…'; $('status').className = 'small muted';
+  const t = performance.now();
+  try { R = await fn(); render(); $('status').textContent = `Готово за ${((performance.now() - t) / 1000).toFixed(1)} с` }
+  catch (e) { $('status').textContent = e.message; $('status').className = 'small err' }
+  $('go').disabled = false;
+}
+
+// --- цвет абзаца по выбранной метрике ---
+const thr = () => R.thresholds.support_sim.toFixed(2).replace('.', ',');
+const METRICS = {
+  novelty: {name: 'Близость к корпусу', legend: () => [['var(--bad)', 'почти то же (≥ 0,85)'], ['var(--warn)', 'близко (0,75–0,85)'], ['var(--accent)', `та же тема (${thr()}–0,75)`], ['var(--none)', `не с чем сравнить (< ${thr()})`]]},
+  repeats: {name: 'Повторы внутри статьи', legend: [['var(--warn)', 'смысловой повтор'], ['var(--bad)', 'дословный повтор'], ['var(--line)', 'нет']]},
+  verbatim: {name: 'Дословно из корпуса', legend: [['var(--bad)', 'совпадает с документом корпуса'], ['var(--line)', 'нет']]},
+};
+function color(p) {
+  if (metric === 'novelty') {
+    if (p.sim == null) return 'var(--line)';
+    if (p.sim >= .85) return 'var(--bad)'; if (p.sim >= .75) return 'var(--warn)';
+    if (p.sim >= R.thresholds.support_sim) return 'var(--accent)'; return 'var(--none)';
+  }
+  if (metric === 'repeats') {
+    if (p.verbatim.some(v => v.where === 'эта статья')) return 'var(--bad)';
+    return p.repeats.length ? 'var(--warn)' : 'var(--line)';
+  }
+  return p.verbatim.some(v => v.doc_id) ? 'var(--bad)' : 'var(--line)';
+}
+
+function render() {
+  const m = R.meta, s = R.summary, a = R.area;
+  let h = `<h1>${esc(m.title || R.file)}</h1><div class="muted small">${esc(m.authors.join(', '))}</div>`;
+  if (m.warnings.length) h += `<div class="small" style="color:var(--warn)">⚠ ${m.warnings.map(esc).join('; ')}</div>`;
+  h += `<div class="metrics" style="margin-top:12px">Раскраска: ` + Object.entries(METRICS).map(([k, v]) =>
+    `<button class="${k === metric ? '' : 'ghost'}" data-m="${k}">${v.name}</button>`).join('') + '</div>';
+  h += '<div class="legend">' + (typeof METRICS[metric].legend === 'function' ? METRICS[metric].legend() : METRICS[metric].legend).map(([c, t]) => `<span><i style="background:${c}"></i>${t}</span>`).join('') + '</div>';
+  if (m.abstract) h += `<h3>Аннотация</h3><div class="p" style="border-left-color:var(--line);cursor:default">${esc(m.abstract)}</div>`;
+  R.sections.forEach(sec => {
+    h += `<h3 id="sec${sec.i}">${esc(sec.title)} <small>${sec.paragraphs} абз. · новизна (с опорой) ${sec.novelty == null ? '—' : sec.novelty.toFixed(2)} · без опоры ${pct(sec.no_support)} · повторы ${pct(sec.repeat_share)}</small></h3>`;
+    R.paragraphs.filter(p => p.section === sec.i).forEach(p => {
+      const badges = [];
+      if (p.repeats.length) badges.push('<span class="b rep">повтор</span>');
+      if (p.verbatim.length) badges.push('<span class="b verb">дословно</span>');
+      if (p.support === false) badges.push('<span class="b nos">нет опоры</span>');
+      h += `<div class="p ${p.formula ? 'formula' : ''}" id="p${p.i}" data-i="${p.i}" style="border-left-color:${color(p)}">
+        <div class="badges">${badges.join('')}</div>${esc(p.text)}</div>`;
+    });
+  });
+  $('doc').innerHTML = h;
+  $('doc').querySelectorAll('[data-m]').forEach(b => b.onclick = () => { metric = b.dataset.m; render() });
+  $('doc').querySelectorAll('.p[data-i]').forEach(el => el.onclick = () => showCard(+el.dataset.i));
+
+  // левая панель: сводка статьи
+  const votes = Object.entries(a.votes || {}).map(([k, v]) => `${esc(k)} ${pct(v)}`).join(', ');
+  let l = `<h2>Статья</h2>
+    <div><span class="tag ${a.source === 'авто' ? 'auto' : ''}">${esc(a.area || 'тема не определена')}</span>
+    <span class="small muted">${a.source}${a.source === 'авто' ? ', уверенность ' + pct(a.confidence) : ''}</span></div>
+    ${votes ? `<div class="small muted" style="margin:4px 0 10px">голоса: ${votes}</div>` : ''}
+    <div class="tiles">
+      <div class="tile"><b>${s.novelty == null ? '—' : s.novelty.toFixed(2)}</b><span>новизна (только абзацы с опорой)</span></div>
+      <div class="tile"><b>${pct(s.no_support)}</b><span>абзацев без опоры в корпусе</span></div>
+      <div class="tile"><b>${pct(s.repeat_share)}</b><span>текста — смысловые повторы</span></div>
+      <div class="tile"><b>${pct(s.verbatim_share)}</b><span>текста — дословные совпадения</span></div>
+      <div class="tile"><b>${pct(s.self_citation)}</b><span>литературы — самоцитирование</span></div>
+      <div class="tile"><b>${s.paragraphs}</b><span>абзацев, ${Math.round(s.chars / 1000)} тыс. знаков</span></div>
+    </div>
+    <h2>С чем сравнивали (${R.neighbours.length})</h2>
+    <div class="small muted">Покрытие = насколько содержание статьи уже есть в документе.</div>`;
+  R.neighbours.forEach(n => l += `<div class="small" style="margin:6px 0">${n.url ? `<a href="${esc(n.url)}" target="_blank">${esc(n.title)}</a>` : esc(n.title)}
+    <span class="muted">${n.year || ''} · ${esc(n.area || '')}</span><div class="bar"><i style="width:${Math.round(n.coverage * 100)}%"></i></div>
+    <span class="muted">покрытие ${n.coverage.toFixed(2)}</span></div>`);
+  l += '<h2>Разделы</h2>';
+  R.sections.forEach(sec => l += `<div class="sec" onclick="document.getElementById('sec${sec.i}').scrollIntoView({behavior:'smooth'})">
+    ${'&nbsp;&nbsp;'.repeat(sec.level - 1)}${esc(sec.title)} <span class="muted">${sec.paragraphs}</span></div>`);
+  l += `<h2>Корпус</h2><button class="ghost" onclick="backToDocs()">← к списку документов</button>`;
+  $('left').innerHTML = l;
+  $('card').innerHTML = '<div class="muted small">Щёлкните по абзацу, чтобы увидеть подробности.</div>';
+}
+
+function backToDocs() {
+  $('left').innerHTML = `<h2>Документы корпуса</h2><div class="small muted">Щелчок — анализ документа относительно остального корпуса.</div><div class="doclist" id="docs"></div>`;
+  loadDocs();
+}
+
+function showCard(i) {
+  document.querySelectorAll('.p.sel').forEach(e => e.classList.remove('sel'));
+  $('p' + i).classList.add('sel');
+  const p = R.paragraphs[i], sec = R.sections[p.section];
+  let h = `<h2>Абзац ${i + 1} · ${esc(sec.title)}</h2><dl>
+    <dt>Знаков</dt><dd>${p.chars}${p.formula ? ' · в основном формулы' : ''}</dd>`;
+  if (p.sim != null) h += `<dt>Близость к корпусу</dt><dd>${p.sim.toFixed(3)} (порог опоры ${R.thresholds.support_sim}) → новизна ${p.novelty.toFixed(2)}</dd>
+    <dt>Опора</dt><dd>${p.support ? 'есть — в корпусе есть близкий по смыслу текст' : '<b>нет</b> — ближайший текст корпуса далёк; высокая новизна здесь значит «не с чем сравнить», а не «ново»'}</dd>`;
+  else h += `<dt>Не оценён</dt><dd>${esc(p.skip)}</dd>`;
+  if (p.shared_chunk) h += `<dt>Оценка</dt><dd class="small muted">по фрагменту вместе с соседними короткими абзацами</dd>`;
+  h += '</dl>';
+  if (p.nearest) {
+    const n = p.nearest;
+    h += `<h2>Ближайший текст в корпусе</h2><div class="small">${n.url ? `<a href="${esc(n.url)}" target="_blank">${esc(n.title)}</a>` : esc(n.title)}
+      <span class="muted">${n.year || ''} · раздел «${esc(n.section)}» · близость ${n.sim.toFixed(2)}</span></div>
+      <div class="quote">${esc(n.text)}…</div>`;
+  }
+  if (p.repeats.length) {
+    h += '<h2>Смысловой повтор внутри статьи</h2>';
+    p.repeats.forEach(r => h += `<div class="quote" style="cursor:pointer" onclick="jump(${r.para})"><b>Абзац ${r.para + 1}</b> · близость ${r.sim.toFixed(2)}<br>${esc(R.paragraphs[r.para].text.slice(0, 260))}…</div>`);
+  }
+  if (p.verbatim.length) {
+    h += '<h2>Дословные совпадения</h2>';
+    p.verbatim.forEach(v => h += v.doc_id
+      ? `<div class="quote bad"><b>${esc(v.where)}</b> · ${pct(v.share)} абзаца<br>${esc(v.text)}…</div>`
+      : `<div class="quote bad" style="cursor:pointer" onclick="jump(${v.para})"><b>Абзац ${v.para + 1} этой статьи</b> · ${pct(v.share)} абзаца</div>`);
+  }
+  $('card').innerHTML = h;
+}
+function jump(i) { $('p' + i).scrollIntoView({behavior: 'smooth', block: 'center'}); showCard(i) }
+
+// ссылка на разбор документа корпуса: article.html?corpus=…&doc=ID[&scope=…]
+async function init() {
+  await loadCorpora();
+  const q = new URLSearchParams(location.search);
+  if (q.get('corpus')) { $('corpus').value = q.get('corpus'); await loadDocs() }
+  if (q.get('scope')) $('scope').value = q.get('scope');
+  if (q.get('doc')) await run(() => api(`/api/corpus-document/${q.get('doc')}?corpus=${encodeURIComponent($('corpus').value)}&scope=${$('scope').value}`));
+  if (q.get('para')) showCard(+q.get('para'));
+}
+init().catch(e => { $('status').textContent = 'Нет связи с сервером: ' + e.message; $('status').className = 'small err' });
+</script>
+</body>
+</html>

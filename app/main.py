@@ -15,11 +15,13 @@ print(f"[app.main] stdout encoding={sys.stdout.encoding} errors={sys.stdout.erro
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from app.api import router
+from app.article_api import router as article_router
 
 app = FastAPI(title="Book Analyzer Service")
 
 # Подключаем роуты
 app.include_router(router)
+app.include_router(article_router)
 
 # Подключаем статику (наш index.html)
 app.mount("/", StaticFiles(directory="static", html=True), name="static")

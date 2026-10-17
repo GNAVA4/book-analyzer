@@ -39,3 +39,5 @@ articles_parsed/
 articles_web/
 articles_web_parsed/
 .cache/
+data/
+articles_cl/

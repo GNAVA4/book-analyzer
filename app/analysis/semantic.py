@@ -81,12 +81,17 @@ class Embedder:
 def make_chunks(parsed: dict) -> list:
     """Фрагменты тела статьи: [{section, text}]. Аннотация — отдельный фрагмент
     (она по определению пересказывает статью — помечаем, чтобы не считать её повтором)."""
+    # paras — номера абзацев тела (сквозная нумерация по разделам), из которых собран фрагмент:
+    # метрики считаются по фрагментам, а показываются по абзацам.
     chunks = []
     if parsed['meta'].get('abstract'):
-        chunks.append({'section': 'Аннотация', 'text': parsed['meta']['abstract'], 'abstract': True})
+        chunks.append({'section': 'Аннотация', 'text': parsed['meta']['abstract'], 'abstract': True,
+                       'paras': []})
+    g = -1
     for sec in parsed['sections']:
-        buf = ''
+        buf, buf_paras = '', []
         for para in sec['paragraphs']:
+            g += 1
             pieces = [para]
             if len(para) > CHUNK_MAX:                      # длинный абзац — по предложениям
                 pieces, cur = [], ''
@@ -99,14 +104,18 @@ def make_chunks(parsed: dict) -> list:
                     pieces.append(cur)
             for piece in pieces:
                 buf = (buf + '\n' + piece).strip() if buf else piece
+                buf_paras.append(g)
                 if len(buf) >= CHUNK_MIN:
-                    chunks.append({'section': sec['title'], 'text': buf, 'abstract': False})
-                    buf = ''
+                    chunks.append({'section': sec['title'], 'text': buf, 'abstract': False,
+                                   'paras': sorted(set(buf_paras))})
+                    buf, buf_paras = '', []
         if buf:
             if chunks and chunks[-1]['section'] == sec['title'] and len(chunks[-1]['text']) + len(buf) <= CHUNK_MAX:
                 chunks[-1]['text'] += '\n' + buf
+                chunks[-1]['paras'] = sorted(set(chunks[-1]['paras'] + buf_paras))
             elif len(buf) >= CHUNK_MIN // 3:
-                chunks.append({'section': sec['title'], 'text': buf, 'abstract': False})
+                chunks.append({'section': sec['title'], 'text': buf, 'abstract': False,
+                               'paras': sorted(set(buf_paras))})
     for i, c in enumerate(chunks):
         c['idx'] = i
         c['formula'] = is_formula(c['text'])
