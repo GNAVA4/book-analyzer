@@ -1,7 +1,7 @@
 {
   "project": "book-analyzer",
   "updated": "2026-10-17",
-  "session": 17,
+  "session": 18,
   "branch": "semantic-analysis",
   "stack": [
     "python3.11",
@@ -12,13 +12,18 @@
   ],
   "status": "active",
   "stage": "2 — semantic analysis (plan_001, adr_004)",
-  "session_intent_last": "methodology with formulas; claim-level analysis on qwen3.6-35b-a3b",
+  "session_intent_last": "claims-level run over half of the corpus",
   "open_bugs": [],
   "open_tasks": [
     {
-      "task": "full claims run over corpus (~3 h)",
-      "priority": "high",
+      "task": "claims run, second half (16 articles, ~50 min)",
+      "priority": "medium",
       "blocked_by": "user decision"
+    },
+    {
+      "task": "claim density per letters, not chars (formulas deflate it)",
+      "priority": "high",
+      "blocked_by": null
     },
     {
       "task": "same-idea vs same-topic: more pairs + human labels",
@@ -42,7 +47,7 @@
     }
   ],
   "pending_verification": [],
-  "last_change": "app/analysis/claims.py (qwen3.6, think closed via /v1/completions); scripts/claims_check.py; docs/semantic_methods.md; report updated; 373 tests",
+  "last_change": "scripts/claims_corpus.py: 18 articles, 558 paragraphs, 54 min; report section on water per article",
   "key_files": {
     "app/services/article_parser.py": "single-article parser (layout-based, no models)",
     "app/analysis/lexical.py": "near-verbatim reuse (shingles), self-citation",
@@ -55,6 +60,7 @@
     "scripts/build_report_data.py": "datasets for the dashboard report",
     "app/analysis/claims.py": "claim extraction/typing/matching via local LLM",
     "scripts/claims_check.py": "water | pairs | stability checks for claims level",
-    "docs/semantic_methods.md": "methodology with formulas and limits"
+    "docs/semantic_methods.md": "methodology with formulas and limits",
+    "scripts/claims_corpus.py": "claims run over a balanced half of the corpus (resumable via cache)"
   }
 }

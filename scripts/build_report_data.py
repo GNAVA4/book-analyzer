@@ -191,8 +191,34 @@ if os.path.exists('.cache/claims_pairs.json'):
     for kind, (num, den) in by_kind.items():
         summary[0][f'shared_claims_{kind}'] = round(num / den, 2) if den else 0.0
 
+# --- утверждения по корпусу (scripts/claims_corpus.py run) ---
+watery = []
+if os.path.exists('.cache/claims_corpus.json'):
+    with open('.cache/claims_corpus.json', encoding='utf-8') as f:
+        cc = json.load(f)
+    by_art = {r['article']: r for r in cc['articles']}
+    for a in articles:
+        r = by_art.get(a['id'])
+        if r:
+            a['claim_density'] = round(r['density'], 2)
+            a['general_share'] = round(r['general_share'], 3)
+            a['watery_share'] = round(r['watery_share'], 3)
+    dens = [r['density'] for r in cc['articles']]
+    summary[0].update({'claims_articles': len(cc['articles']),
+                       'claims_corpus_paragraphs': len(cc['paragraphs']),
+                       'claims_corpus_density_median': round(float(np.median(dens)), 2) if dens else 0.0})
+    # самые водянистые абзацы корпуса: есть утверждения, а содержательных меньше всего
+    cand = [p for p in cc['paragraphs'] if p['claims'] >= 3 and len(p['text']) >= 300]
+    cand.sort(key=lambda p: (p['substantive_per_1000'], -p['general_share']))
+    for k, p in enumerate(cand[:6], 1):
+        watery.append({'id': f'w{k}', 'article': title_of.get(p['article'], p['article']),
+                       'section': p['section'], 'density': round(p['substantive_per_1000'], 2),
+                       'general_share': round(p['general_share'], 2), 'claims': p['claims'],
+                       'text': clip(p['text'], 520)})
+
 for name, rows in [('summary', summary), ('articles', articles), ('coverage', coverage),
-                   ('pairs', pairs), ('synthetic', synthetic), ('claims_pairs', claims_pairs)]:
+                   ('pairs', pairs), ('synthetic', synthetic), ('claims_pairs', claims_pairs),
+                   ('watery', watery)]:
     path = os.path.join(out_dir, name + '.json')
     with open(path, 'w', encoding='utf-8') as f:
         json.dump(rows, f, ensure_ascii=False)
