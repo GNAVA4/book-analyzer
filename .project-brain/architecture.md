@@ -1,5 +1,5 @@
 # Architecture — Book Analyzer
-_Last updated: 2026-06-28 (session 013)_
+_Last updated: 2026-10-17 (session 014)_
 
 ## What this system does
 Parses PDF/DOCX/TXT books into structured XML: extracts Table of Contents and slices each section's
@@ -319,6 +319,58 @@ are invoked SEQUENTIALLY (GPU ≤90%). `_llm_from_text_retry` retries up to 3× 
 
 ---
 
+---
+
+## ЭТАП 2 — семантический анализ (ветка `semantic-analysis`, plan_001, ADR 004)
+
+```
+[статья PDF] → article_parser.parse_article_pdf → dict{meta, sections, paragraphs, warnings}
+                                   │                     │
+                         to_xml_nodes → xml_builder      └→ app/analysis/* (слой анализа)
+                         (тот же XML, что у книг)              ├─ lexical.py  — шинглы: повторы, самоцит.
+                                                               └─ (план) эмбеддинги, утверждения, роли
+[книга] → этап 1 → XML ────────────────────────────────────────┘ (план: книги как корпус)
+```
+
+### article_parser.py (session 014)
+- **What:** парсер ОДИНОЧНОЙ статьи без оглавления. Структура восстанавливается по вёрстке
+  (PyMuPDF spans), без моделей и без поиска заголовков по тексту (заголовки уже на своих местах).
+- **Non-obvious:**
+  - Строки одной высоты склеиваются (выключка по ширине дробит строку на слова); пробел между
+    спанами — только при реальном зазоре (иначе «В ВЕДЕНИЕ» из капители).
+  - Отступ первой строки — ОТНОСИТЕЛЬНО соседних строк (висячий отступ списка не дробит абзацы).
+  - Абзац рвётся перед якорными словами (Резюме/Ключевые слова/Для цитирования/…), при смене
+    кириллица↔латиница (англ. дубли названия) и при смене «таблица/текст».
+  - Заголовок = стиль (жирный/крупнее/КАПС) + правдоподобие (не подпись, не пункт списка, не
+    жирное предложение) + за ним идёт текст ≥100 симв. (отсекает ячейки таблиц). Заголовок в
+    начале абзаца — жирный или КУРСИВ, либо словарь «Введение./Выводы./…».
+  - Мелкий кегль (<0.75 основного) убирается только из ТЕЛА (в шапке аннотация бывает 7–8pt).
+  - Несколько статей в одном файле (журнальная выгрузка): разрез по русским «Ключевые слова»,
+    выбор по совпадению названия с именем файла, иначе самая длинная; чужое — warning.
+  - Литература: новый пункт только при номере = предыдущий+1 и том же стиле («[n]»/«n.»).
+- Пороги — константы в начале модуля, подобраны на 5 статьях (articles/).
+
+### article_parser.py — режим «старый журнал» (session 015)
+- Нет «Ключевых слов» → опора на НАЗВАНИЕ: выделенный кириллический абзац рядом со строкой
+  авторов (`_title_candidates`, `_find_title_idx`); назад по УДК/авторам (`_header_start`) —
+  всё раньше = хвост предыдущей статьи; ещё одно «авторы + НАЗВАНИЕ (КАПС/крупнее)» дальше =
+  следующая статья журнала. Литература без заголовка — `_unlabeled_refs_start`.
+- `_repair_text`: cp1251-как-latin-1 по участкам, разрядка. Скан (<200 симв./стр.) → needs_ocr.
+
+### app/analysis/semantic.py (session 015)
+- Фрагменты 300–1500 симв. (`make_chunks`); `Embedder` — LM Studio /v1/embeddings, батч 32,
+  дисковый кэш `.cache/embeddings.jsonl` (sha1(model+text)), httpx `trust_env=False`.
+- coverage(A→B), novelty leave-one-out, redundant_pairs (несоседние, без аннотации/формул,
+  порог 0.82). Формульный фрагмент = доля кирилл./лат. букв < 0.70.
+- Новизна относительна корпусу — без близких соседей завышается (нужна пометка «нет опоры»).
+
+### app/analysis/lexical.py (session 014)
+- Шинглы по 5 «основ» (первые 6 букв), containment между абзацами (асимметричный) → почти
+  дословные повторы внутри статьи и между статьями; доля текста, повторённого в корпусе;
+  самоцитирование (фамилии авторов в литературе). Пересказ НЕ ловит — это задача эмбеддингов.
+
+---
+
 ## Data flow (primary use case: neural PDF)
 
 1. `POST /upload` → saves to temp file, returns `temp_id`
@@ -444,3 +496,5 @@ _Append only. Never delete entries._
 | 2026-06-27 | 011 | page_cut: stagger same-page sections (fix B) | Same-page page_cut got identical slice window → byte-identical duplicate content; dups 50→4 |
 | 2026-06-27 | 012 | `_pick_body_source` — pick body text by comparing candidates, not readability flag | ToC-OCR overrode full readable body on OCR-escalated docs; digital-design 24→97, systemic |
 | 2026-06-28 | 013 | `footer_junk_lines`/`strip_junk_lines`; per-page watermark strip from CONTENT (decoupled); 0.60 page-fraction | «Библиотека БГУИР» (787×) polluted content; full_text-strip churned page_cut; 0.30 deleted real content |
+| 2026-10-17 | 014 | ЭТАП 2: `article_parser.py` (статья без оглавления, по вёрстке) + `app/analysis/lexical.py` | Новая задача — семантический анализ статей (ADR 004); статьи грузятся поодиночке |
+| 2026-10-17 | 015 | article_parser: режим «старый журнал» (опора на название); `app/analysis/semantic.py` (эмбеддинги); numpy | 18/20 статей КиберЛенинки ломали шапку; пересказ не ловится шинглами |
