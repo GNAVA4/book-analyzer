@@ -216,6 +216,11 @@ if os.path.exists('.cache/claims_corpus.json'):
                        'general_share': round(p['general_share'], 2), 'claims': p['claims'],
                        'text': clip(p['text'], 520)})
 
+# --- проверка согласованности метрик (scripts/consistency_check.py) ---
+if os.path.exists(os.path.join(out_dir, 'consistency_summary.json')):
+    with open(os.path.join(out_dir, 'consistency_summary.json'), encoding='utf-8') as f:
+        summary[0].update(json.load(f))
+
 for name, rows in [('summary', summary), ('articles', articles), ('coverage', coverage),
                    ('pairs', pairs), ('synthetic', synthetic), ('claims_pairs', claims_pairs),
                    ('watery', watery)]:

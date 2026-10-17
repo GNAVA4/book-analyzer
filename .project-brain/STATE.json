@@ -1,7 +1,7 @@
 {
   "project": "book-analyzer",
   "updated": "2026-10-17",
-  "session": 18,
+  "session": 19,
   "branch": "semantic-analysis",
   "stack": [
     "python3.11",
@@ -12,9 +12,14 @@
   ],
   "status": "active",
   "stage": "2 — semantic analysis (plan_001, adr_004)",
-  "session_intent_last": "claims-level run over half of the corpus",
+  "session_intent_last": "check report for contradictions between metrics",
   "open_bugs": [],
   "open_tasks": [
+    {
+      "task": "redefine novelty: substantive fragments only + 'nothing to compare with' flag",
+      "priority": "high",
+      "blocked_by": "user decision"
+    },
     {
       "task": "claims run, second half (16 articles, ~50 min)",
       "priority": "medium",
@@ -47,7 +52,7 @@
     }
   ],
   "pending_verification": [],
-  "last_change": "scripts/claims_corpus.py: 18 articles, 558 paragraphs, 54 min; report section on water per article",
+  "last_change": "scripts/consistency_check.py; report section on metric consistency; novelty ~ isolation (rho=-0.92)",
   "key_files": {
     "app/services/article_parser.py": "single-article parser (layout-based, no models)",
     "app/analysis/lexical.py": "near-verbatim reuse (shingles), self-citation",
@@ -61,6 +66,7 @@
     "app/analysis/claims.py": "claim extraction/typing/matching via local LLM",
     "scripts/claims_check.py": "water | pairs | stability checks for claims level",
     "docs/semantic_methods.md": "methodology with formulas and limits",
-    "scripts/claims_corpus.py": "claims run over a balanced half of the corpus (resumable via cache)"
+    "scripts/claims_corpus.py": "claims run over a balanced half of the corpus (resumable via cache)",
+    "scripts/consistency_check.py": "metric correlations and contradiction finder"
   }
 }
