@@ -1,23 +1,48 @@
 {
   "project": "book-analyzer",
   "updated": "2026-10-17",
-  "session": 15,
+  "session": 16,
   "branch": "semantic-analysis",
-  "stack": ["python3.11", "fastapi", "pymupdf", "numpy", "lm-studio (qwen2.5-7b, qwen3.6-35b-a3b, glm-ocr, qwen3-embedding-0.6b)"],
+  "stack": [
+    "python3.11",
+    "fastapi",
+    "pymupdf",
+    "numpy",
+    "lm-studio (qwen2.5-7b, qwen3.6-35b-a3b, glm-ocr, qwen3-embedding-0.6b)"
+  ],
   "status": "active",
   "stage": "2 — semantic analysis (plan_001, adr_004)",
-  "session_intent_last": "find math/AI articles, run them through parser, build embedding layer",
+  "session_intent_last": "commit; +20 fresh CRM articles; synthetic injection check; dashboard report",
   "open_bugs": [],
   "open_tasks": [
-    {"task": "commit sessions 014-015", "priority": "high", "blocked_by": "user decision"},
-    {"task": "synthetic validation (dup/paraphrase/water injection)", "priority": "high", "blocked_by": null},
-    {"task": "'no support in corpus' flag for novelty", "priority": "high", "blocked_by": null},
-    {"task": "OCR path for scanned articles", "priority": "medium", "blocked_by": null},
-    {"task": "HTML report with coverage heatmap", "priority": "medium", "blocked_by": null},
-    {"task": "claims + paragraph roles (LLM)", "priority": "medium", "blocked_by": "synthetic validation"}
+    {
+      "task": "water detector (LLM claim density)",
+      "priority": "high",
+      "blocked_by": null
+    },
+    {
+      "task": "same-idea vs same-narrow-topic (claims level)",
+      "priority": "high",
+      "blocked_by": null
+    },
+    {
+      "task": "'no support in corpus' flag for novelty",
+      "priority": "medium",
+      "blocked_by": null
+    },
+    {
+      "task": "OCR path for scanned articles",
+      "priority": "medium",
+      "blocked_by": null
+    },
+    {
+      "task": "CRM refs double-count (ru+en versions)",
+      "priority": "low",
+      "blocked_by": null
+    }
   ],
   "pending_verification": [],
-  "last_change": "article_parser generalized to old journals; app/analysis/semantic.py + scripts/semantic_articles.py; 366 tests pass",
+  "last_change": "parser: lang detection, unnumbered refs, title gap scaling, author dedup; synthetic_check.py; build_report_data.py; dashboard https://claude.ai/artifact/5Lhtj2EfpAb9sfLJQosrQu",
   "key_files": {
     "app/services/article_parser.py": "single-article parser (layout-based, no models)",
     "app/analysis/lexical.py": "near-verbatim reuse (shingles), self-citation",
@@ -25,6 +50,8 @@
     "scripts/parse_articles.py": "DIR -> DIR_parsed (xml+json)",
     "scripts/analyze_articles.py": "lexical report",
     "scripts/semantic_articles.py": "semantic report (--out json)",
-    "app/services/pdf_parser_neural.py": "stage-1 book pipeline coordinator"
+    "app/services/pdf_parser_neural.py": "stage-1 book pipeline coordinator",
+    "scripts/synthetic_check.py": "injection test (gen with LLM, check with embeddings)",
+    "scripts/build_report_data.py": "datasets for the dashboard report"
   }
 }

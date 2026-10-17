@@ -47,6 +47,7 @@ NEXT_ARTICLE_MIN_GAP = 5        # следующая статья в файле 
 TITLE_MIN_WORDS = 3             # название короче 3 слов — скорее рубрика журнала
 UNLABELED_ABSTRACT_MAX = 1500   # аннотация без метки: ≤3 абзаца, ≤1500 симв., дальше англ. блок
 BODY_LATIN_DROP = 0.8           # абзац тела русской статьи с >80% латиницы — англ. дубль, не текст
+BODY_LANG_LATIN = 0.6           # >60% латиницы во всём, кроме шапки, — статья на английском
 TEXT_LAYER_MIN_CHARS_PER_PAGE = 200  # меньше — скан без текстового слоя, нужен OCR
 
 _CAPTION = re.compile(r'^(рис(унок|\.)|таблица|табл\.|figure|fig\.|table)\s*\d', re.I)
@@ -359,7 +360,10 @@ def build_paragraphs(lines: list, geo: dict) -> tuple[list, float]:
                 new = prev.x1 < rm - SHORT_LINE_SLACK or prev.text.endswith(('.', ':', '!', '?'))
                 new = new or hs_prev != hs_cur
             else:
-                new = (l.y0 - prev.y0 > leading * PARA_GAP_FACTOR
+                # интерлиньяж растёт с кеглем: строки названия 16pt при теле 10pt стоят
+                # реже, но это один абзац («Обучение с подкреплением… / параметров… / рынках»)
+                scale = max(1.0, min(l.size, prev.size) / body)
+                new = (l.y0 - prev.y0 > leading * PARA_GAP_FACTOR * scale
                        or first_indent
                        or (prev.x1 < rm - SHORT_LINE_SLACK and prev.text.endswith(('.', ':', '!', '?', ';')))
                        or abs(l.size - prev.size) > 1.0
@@ -546,6 +550,13 @@ def _unlabeled_refs_start(paras: list, front_end: int) -> int | None:
     return None
 
 
+def _author_key(name: str) -> str:
+    """Ключ автора без учёта порядка и регистра: фамилия + инициалы."""
+    surname = max(re.findall(r'[А-ЯЁа-яё]{2,}', name), key=len, default='').lower()
+    initials = ''.join(sorted(re.findall(r'([А-ЯЁ])\.', name)))
+    return surname + '|' + initials
+
+
 def _strip_label(rx, text: str) -> str:
     return rx.sub('', text, count=1).strip()
 
@@ -661,7 +672,12 @@ def assign_zones(paras: list, body_size: float) -> dict:
             if not _AFFIL.search(l.text):
                 names += _NAME.findall(l.text)
         if names:
-            meta['authors'].extend(n for n in names if n not in meta['authors'])
+            # «О.О. Варламов» (шапка) и «Варламов О.О.» («Для цитирования») — один автор
+            seen = {_author_key(a) for a in meta['authors']}
+            for nm in names:
+                if _author_key(nm) not in seen:
+                    meta['authors'].append(nm)
+                    seen.add(_author_key(nm))
             if len(p.text) < 300:
                 p.role = 'authors'
 
@@ -672,8 +688,10 @@ def assign_zones(paras: list, body_size: float) -> dict:
             p.role = 'back'
             other.append(p)
             continue
+        # длинный латинский абзац после литературы — англ. блок (об авторах и т.п.), НО не
+        # транслитерация описания («Anikin Yu. A. … — 2012. — Vol. 52»): у неё признаки ссылки
         if other or (p.role != 'references' and _latin_ratio(p.text) > 0.5 and not _REF_ITEM.match(p.text)
-                     and refs and len(p.text) > 300):
+                     and refs and len(p.text) > 300 and not _REF_LOOK.search(p.text)):
             p.role = 'back'
             other.append(p)
             continue
@@ -687,6 +705,19 @@ def assign_zones(paras: list, body_size: float) -> dict:
     # внутри описания журнала тоже начинается с «число.», но номер не по порядку
     # и того же стиля нумерации, что первый пункт («[n]» или «n.»)
     items, last_no, style = [], 0, None
+    ref_lines = [l for p in refs for l in p.lines]
+    # о нумерации судим по ПЕРВОЙ строке списка: перенос «… Vol. 65.» тоже начинается с «число.»
+    if ref_lines and not _REF_ITEM.match(ref_lines[0].text):
+        # без нумерации (CRM): пункт = строка у левого края списка, продолжение — с отступом
+        left_of = {}
+        for l in ref_lines:
+            left_of[l.page] = min(left_of.get(l.page, l.x0), l.x0)
+        for l in ref_lines:
+            if l.x0 <= left_of[l.page] + INDENT_MIN / 2 or not items:
+                items.append(l.text)
+            else:
+                items[-1] = _join(items[-1], l.text)
+        refs = []                       # уже разобрано, нумерованная ветка ниже не нужна
     for p in refs:
         for l in p.lines:
             m = re.match(r'^(\[)?(\d{1,3})[\].]', l.text)
@@ -798,7 +829,16 @@ def parse_article_pdf(path: str) -> dict:
     for p in paras:
         if not (s <= paras.index(p) < e):
             p.role = 'foreign'
-    if not res['sections']:
+
+    # язык текста статьи — по всему, что не шапка (у русских журналов бывает русская шапка
+    # при английском тексте: 5 из 20 статей CRM). Проект анализирует только русский (ADR 004).
+    rest = ' '.join(p.text for p in paras[s:e] if p.role not in ('front', 'title', 'authors', 'udk',
+                                                                'abstract', 'keywords'))
+    lang = 'en' if len(rest) > 500 and _latin_ratio(rest) > BODY_LANG_LATIN else 'ru'
+    if lang == 'en':
+        warnings.append('текст статьи на английском (на русском только шапка) — из анализа исключена')
+        res['sections'] = []
+    if not res['sections'] and lang == 'ru':
         warnings.append('тело статьи не найдено')
     if not res['meta']['references']:
         warnings.append('список литературы не найден')
@@ -813,6 +853,7 @@ def parse_article_pdf(path: str) -> dict:
         'sections': res['sections'],
         'paragraphs': [{'page': p.page + 1, 'role': p.role, 'text': p.text} for p in paras],
         'needs_ocr': False,
+        'lang': lang,
         'warnings': warnings,
     }
 
