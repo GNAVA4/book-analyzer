@@ -60,7 +60,7 @@ qwen2.5-7b-instruct (ctx 8192), glm-ocr, text-embedding-qwen3-embedding-0.6b.
 - Session 021: страница переделана «для людей» (шаги, пояснения метрик, справка, вердикт по абзацу);
   DOCX на входе (`article_docx.py`); ВКР/курсовые: оглавление выкидывается, списки склеиваются;
   MIN_BODY 2500 [user]; корпус «Студенческие работы» (ВКР + отчёт о НИР).
-- Session 022: Qwen3.8-27B не грузится (движок 2.14.0 не знает MTP-слой) — нужен апдейт LM Studio;
+- Session 022: Qwen3.8-27B — движок LM Studio ≥2.60, `--gpu 0.5 --parallel 1` (VRAM 87%); ×3 медленнее 3.6, «воду» видит так же;
   эмбеддеры 4B/bge-m3 не лучше 0.6b ([[insight_2026-10-18_embedder-comparison-no-gain]]).
 
 ## Decisions that affect ALL code

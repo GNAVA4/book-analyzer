@@ -16,11 +16,6 @@
   "open_bugs": [],
   "open_tasks": [
     {
-      "task": "update LM Studio runtime for qwen3.8 (MTP layer), then llm_compare",
-      "priority": "medium",
-      "blocked_by": "user (GUI update)"
-    },
-    {
       "task": "claims level in the service (background queue)",
       "priority": "high",
       "blocked_by": null
@@ -62,7 +57,7 @@
     }
   ],
   "pending_verification": [],
-  "last_change": "scripts/llm_compare.py, scripts/embed_compare.py; qwen3.8 blocked by runtime",
+  "last_change": "qwen3.8 compared with 3.6 (x3 slower, same water detection); branch pushed",
   "key_files": {
     "app/services/article_parser.py": "single-article parser (layout-based, no models)",
     "app/analysis/lexical.py": "near-verbatim reuse (shingles), self-citation",
