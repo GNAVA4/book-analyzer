@@ -1,5 +1,5 @@
 # PROJECT CONTEXT — Book Analyzer
-_Updated: 2026-10-18 session 021_
+_Updated: 2026-10-18 session 022_
 
 ## What this project is
 Этап 1 (готов, приемлемое качество): парсер книг PDF/DOCX/TXT → XML-дерево (оглавление + содержимое
@@ -60,6 +60,8 @@ qwen2.5-7b-instruct (ctx 8192), glm-ocr, text-embedding-qwen3-embedding-0.6b.
 - Session 021: страница переделана «для людей» (шаги, пояснения метрик, справка, вердикт по абзацу);
   DOCX на входе (`article_docx.py`); ВКР/курсовые: оглавление выкидывается, списки склеиваются;
   MIN_BODY 2500 [user]; корпус «Студенческие работы» (ВКР + отчёт о НИР).
+- Session 022: Qwen3.8-27B не грузится (движок 2.14.0 не знает MTP-слой) — нужен апдейт LM Studio;
+  эмбеддеры 4B/bge-m3 не лучше 0.6b ([[insight_2026-10-18_embedder-comparison-no-gain]]).
 
 ## Decisions that affect ALL code
 Этап 2 [ADR 004]: новизна = ДВА числа (покрытие эталона + «сверх эталона») [user]; единица —

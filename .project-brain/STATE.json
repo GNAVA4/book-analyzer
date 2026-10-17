@@ -1,7 +1,7 @@
 {
   "project": "book-analyzer",
   "updated": "2026-10-18",
-  "session": 21,
+  "session": 22,
   "branch": "semantic-analysis",
   "stack": [
     "python3.11",
@@ -12,9 +12,14 @@
   ],
   "status": "active",
   "stage": "2 — semantic analysis (plan_001, adr_004)",
-  "session_intent_last": "user-friendly redesign of the service page; DOCX input; student works",
+  "session_intent_last": "qwen3.8 setup + embedder comparison",
   "open_bugs": [],
   "open_tasks": [
+    {
+      "task": "update LM Studio runtime for qwen3.8 (MTP layer), then llm_compare",
+      "priority": "medium",
+      "blocked_by": "user (GUI update)"
+    },
     {
       "task": "claims level in the service (background queue)",
       "priority": "high",
@@ -57,7 +62,7 @@
     }
   ],
   "pending_verification": [],
-  "last_change": "static/article.html redesign; app/services/article_docx.py; parser: TOC lines, list joining; MIN_BODY 2500",
+  "last_change": "scripts/llm_compare.py, scripts/embed_compare.py; qwen3.8 blocked by runtime",
   "key_files": {
     "app/services/article_parser.py": "single-article parser (layout-based, no models)",
     "app/analysis/lexical.py": "near-verbatim reuse (shingles), self-citation",
@@ -80,6 +85,8 @@
     "scripts/fetch_cyberleninka.py": "download by rubric",
     "scripts/corpus_build.py": "folder -> corpus",
     "scripts/corpus_calibrate.py": "topic LOO + support threshold",
-    "app/services/article_docx.py": "DOCX work (coursework/report) -> article parser format"
+    "app/services/article_docx.py": "DOCX work (coursework/report) -> article parser format",
+    "scripts/llm_compare.py": "LLM comparison on claims tasks",
+    "scripts/embed_compare.py": "embedder comparison on corpus tasks"
   }
 }

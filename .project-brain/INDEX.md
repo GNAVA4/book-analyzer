@@ -1,5 +1,5 @@
 # MEMORY INDEX — Book Analyzer
-_Updated: 2026-10-18 session 021_
+_Updated: 2026-10-18 session 022_
 
 ## By topic
 | Topic | Files |
@@ -13,6 +13,7 @@ _Updated: 2026-10-18 session 021_
 | согласованность метрик, новизна | session_019, insight_2026-10-17_novelty-is-isolation-not-content |
 | уровень утверждений (LLM), «вода» | session_017, insight_2026-10-17_qwen36-thinking-off-via-completions, app/analysis/claims.py |
 | данные: статьи, КиберЛенинка, сканы | DATA.md, session_015 |
+| модели: сравнение LLM и эмбеддеров | session_022, insight_2026-10-18_embedder-comparison-no-gain, insight_2026-10-18_qwen38-needs-newer-runtime |
 | инструменты / окружение | insight_2026-10-17_bash-tool-unescapes-backslash-b, insight_2026-05-28_ocr-cp1251-crash |
 | оглавление книг (каскад, fallback) | adr_003, session_004–006, bug_2026-05-29_toc-subsections-dropped, bug_2026-05-30_llm-strips-hierarchical-numbering, bug_2026-05-30_heuristic-splits-multi-line-toc-title |
 | сопоставление разделов, page_cut | session_001–002, 007–011, insight_*page-cut*, insight_2026-06-27_*, bug_2026-06-10_anchor-interpolation-extrapolation-into-index, bug_2026-05-28_part-divider-absorbs-chapter-body |
@@ -45,6 +46,7 @@ _Updated: 2026-10-18 session 021_
 | 019 | 2026-10-17 | проверка метрик на противоречия: новизна ≈ одиночество, не связана с водой |
 | 020 | 2026-10-18 | сервис: именованные корпуса (SQLite), тема, анализ по абзацам, /article.html; 145 статей КиберЛенинки; парсер — колонки |
 | 021 | 2026-10-18 | редизайн страницы сервиса; DOCX; ВКР/отчёт о НИР в корпусе; оглавления и списки в парсере |
+| 022 | 2026-10-18 | Qwen3.8 (не грузится: движок), сравнение эмбеддеров (0.6b остаётся) |
 
 ## Plans
 | # | Title | Status |
