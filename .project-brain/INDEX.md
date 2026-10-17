@@ -1,5 +1,5 @@
 # MEMORY INDEX — Book Analyzer
-_Updated: 2026-10-18 session 020_
+_Updated: 2026-10-18 session 021_
 
 ## By topic
 | Topic | Files |
@@ -8,7 +8,7 @@ _Updated: 2026-10-18 session 020_
 | парсер статей | session_014, plan_001 (фаза 1a) |
 | лексический анализ (повторы, самоцитирование) | session_014, plan_001 (фаза 1b-лекс) |
 | смысловой анализ (эмбеддинги, новизна, самоповтор) | session_015, insight_2026-10-17_paraphrased-self-repetition, plan_001 (фаза 1b) |
-| сервис: корпуса, тема, страница по абзацам | session_020, adr_005, insight_2026-10-18_area-level-corpus-too-coarse-for-novelty |
+| сервис: корпуса, тема, страница по абзацам | session_020, session_021 (дизайн, DOCX), adr_005, insight_2026-10-18_area-level-corpus-too-coarse-for-novelty |
 | методика и формулы | docs/semantic_methods.md, session_017 |
 | согласованность метрик, новизна | session_019, insight_2026-10-17_novelty-is-isolation-not-content |
 | уровень утверждений (LLM), «вода» | session_017, insight_2026-10-17_qwen36-thinking-off-via-completions, app/analysis/claims.py |
@@ -44,6 +44,7 @@ _Updated: 2026-10-18 session 020_
 | 018 | 2026-10-17 | утверждения по половине корпуса (18 статей); «вода» по статьям в отчёте |
 | 019 | 2026-10-17 | проверка метрик на противоречия: новизна ≈ одиночество, не связана с водой |
 | 020 | 2026-10-18 | сервис: именованные корпуса (SQLite), тема, анализ по абзацам, /article.html; 145 статей КиберЛенинки; парсер — колонки |
+| 021 | 2026-10-18 | редизайн страницы сервиса; DOCX; ВКР/отчёт о НИР в корпусе; оглавления и списки в парсере |
 
 ## Plans
 | # | Title | Status |

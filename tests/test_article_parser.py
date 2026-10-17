@@ -108,6 +108,22 @@ class TestColumns:
         assert _column_order(rows, 600) is rows
 
 
+class TestTocAndLists:
+    def test_toc_dropped_and_list_items_joined(self):
+        paras = [
+            TP('СОДЕРЖАНИЕ'),
+            TP('ВВЕДЕНИЕ ............................................ 2'),
+            TP('Цель работы — провести анализ. Задачи работы:'),
+            TP('1) изучить литературу;'),
+            TP('2) собрать данные.'),
+            TP('Основной текст работы продолжается здесь. ' * 10),
+        ]
+        res = assign_zones(paras, 12.0)
+        body = [t for s in res['sections'] for t in s['paragraphs']]
+        assert body[0] == 'Цель работы — провести анализ. Задачи работы:\n1) изучить литературу;\n2) собрать данные.'
+        assert not any('....' in t for t in body) and len(body) == 2
+
+
 class TestTrailingHeader:
     """«Доклады АМАН»: аннотация и ключевые слова ПОСЛЕ литературы — тело не уходит в шапку."""
     def paras(self):

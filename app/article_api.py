@@ -13,6 +13,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from app.analysis.article_report import analyze_article
 from app.analysis.corpus import CorpusStore
+from app.services.article_docx import parse_article_docx
 from app.services.article_parser import parse_article_pdf
 
 router = APIRouter(prefix='/api')
@@ -58,15 +59,18 @@ def areas():
 @router.post('/article/analyze')
 def analyze_upload(file: UploadFile = File(...), corpus: str = Form(...), scope: str = Form('topic'),
                    area: str = Form(''), add: bool = Form(False)):
-    if not file.filename.lower().endswith('.pdf'):
-        raise HTTPException(422, 'Пока поддерживается только PDF статьи')
-    path = os.path.join(tempfile.gettempdir(), f'article_{uuid4().hex}.pdf')
+    ext = os.path.splitext(file.filename.lower())[1]
+    if ext not in ('.pdf', '.docx'):
+        raise HTTPException(422, 'Поддерживаются PDF и DOCX')
+    path = os.path.join(tempfile.gettempdir(), f'article_{uuid4().hex}{ext}')
     with open(path, 'wb') as f:
         f.write(file.file.read())
     try:
-        parsed = parse_article_pdf(path)
+        parsed = parse_article_pdf(path) if ext == '.pdf' else parse_article_docx(path)
     finally:
         os.remove(path)
+    if not parsed['sections']:
+        raise HTTPException(422, 'Не удалось выделить текст работы: ' + '; '.join(parsed['warnings']))
     if parsed.get('needs_ocr'):
         raise HTTPException(422, 'Скан без текстового слоя — нужен OCR (пока не поддерживается)')
     try:

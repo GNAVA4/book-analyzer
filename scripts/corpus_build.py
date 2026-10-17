@@ -1,4 +1,4 @@
-"""Загрузка папки PDF-статей в именованный корпус (data/corpus.db).
+"""Загрузка папки статей (PDF, DOCX) в именованный корпус (data/corpus.db).
 
     venv/Scripts/python.exe scripts/corpus_build.py CORPUS DIR [--area "Область"] [--desc "..."]
 Тема документа: --area для всей папки, иначе <имя>.meta.json рядом с PDF (поле area —
@@ -16,10 +16,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.stdout.reconfigure(encoding='utf-8')
 
 from app.analysis.corpus import CorpusStore  # noqa: E402
+from app.services.article_docx import parse_article_docx  # noqa: E402
 from app.services.article_parser import parse_article_pdf  # noqa: E402
 
-# Тело короче ~1.5 страницы — тезисы/аннотации/обрывки разбора: шумные векторы, не статья.
-MIN_BODY = 3000
+# Тело короче ~1 страницы — тезисы/аннотации/обрывки разбора: шумные векторы, не статья.
+# 2500 — решение user (session 021): короткие настоящие статьи (1900–3000) были бы потеряны при 3000,
+# ниже 2500 — уже тезисы.
+MIN_BODY = 2500
 
 
 def main():
@@ -39,7 +42,7 @@ def main():
     have = {d['name'] for d in store.documents(corpus)}
     added, skipped = 0, []
     t0 = time.time()
-    for path in sorted(glob.glob(os.path.join(in_dir, '*.pdf'))):
+    for path in sorted(glob.glob(os.path.join(in_dir, '*.pdf')) + glob.glob(os.path.join(in_dir, '*.docx'))):
         name = os.path.splitext(os.path.basename(path))[0]
         if name in have:
             continue
@@ -48,7 +51,7 @@ def main():
             with open(os.path.join(in_dir, name + '.meta.json'), encoding='utf-8') as f:
                 meta = json.load(f)
         try:
-            parsed = parse_article_pdf(path)
+            parsed = parse_article_pdf(path) if path.lower().endswith('.pdf') else parse_article_docx(path)
         except Exception as e:                                  # битый PDF не должен рвать прогон
             skipped.append((name, f'ошибка разбора: {e}'))
             continue

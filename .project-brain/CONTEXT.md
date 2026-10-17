@@ -1,5 +1,5 @@
 # PROJECT CONTEXT — Book Analyzer
-_Updated: 2026-10-18 session 020_
+_Updated: 2026-10-18 session 021_
 
 ## What this project is
 Этап 1 (готов, приемлемое качество): парсер книг PDF/DOCX/TXT → XML-дерево (оглавление + содержимое
@@ -57,6 +57,9 @@ qwen2.5-7b-instruct (ctx 8192), glm-ocr, text-embedding-qwen3-embedding-0.6b.
   дословные). Корпуса: «КиберЛенинка» 119 (7 областей, articles_cl/), «Статьи этапа 2» 31.
   Парсер: двухколоночная вёрстка, аннотация после литературы. Тема LOO 75%; области слишком
   крупные для новизны — нужны плотные корпуса ([[insight_2026-10-18_area-level-corpus-too-coarse-for-novelty]]).
+- Session 021: страница переделана «для людей» (шаги, пояснения метрик, справка, вердикт по абзацу);
+  DOCX на входе (`article_docx.py`); ВКР/курсовые: оглавление выкидывается, списки склеиваются;
+  MIN_BODY 2500 [user]; корпус «Студенческие работы» (ВКР + отчёт о НИР).
 
 ## Decisions that affect ALL code
 Этап 2 [ADR 004]: новизна = ДВА числа (покрытие эталона + «сверх эталона») [user]; единица —
@@ -90,7 +93,8 @@ qwen2.5-7b-instruct (ctx 8192), glm-ocr, text-embedding-qwen3-embedding-0.6b.
 - Мелкий кегль в статьях не выкидывать до разметки зон (аннотация бывает 7–8pt).
 
 ## Key file map
-- `app/analysis/corpus.py`, `app/analysis/article_report.py`, `app/article_api.py`, `static/article.html` — сервис статей (session 020)
+- `app/analysis/corpus.py`, `app/analysis/article_report.py`, `app/article_api.py`, `static/article.html` — сервис статей (session 020–021)
+- `app/services/article_docx.py` — DOCX-работа → формат парсера статей
 - `scripts/fetch_cyberleninka.py`, `scripts/corpus_build.py`, `scripts/corpus_calibrate.py` — корпус
 - `app/services/article_parser.py` — парсер статьи (этап 2)
 - `app/analysis/lexical.py` — лексический слой анализа (этап 2)
@@ -101,4 +105,4 @@ qwen2.5-7b-instruct (ctx 8192), glm-ocr, text-embedding-qwen3-embedding-0.6b.
 - `app/services/pdf_parser_neural.py` — координатор книжного пайплайна
 - `app/services/toc_builder.py`, `mapping_pipeline.py`, `pdf_utils.py`, `xml_builder.py` — этап 1
 - `scripts/run_corpus.py` — прогон корпуса книг (OUT_DIR)
-- `tests/` — 382 теста
+- `tests/` — 385 тестов

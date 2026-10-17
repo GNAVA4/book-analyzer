@@ -1,7 +1,7 @@
 {
   "project": "book-analyzer",
   "updated": "2026-10-18",
-  "session": 20,
+  "session": 21,
   "branch": "semantic-analysis",
   "stack": [
     "python3.11",
@@ -12,7 +12,7 @@
   ],
   "status": "active",
   "stage": "2 — semantic analysis (plan_001, adr_004)",
-  "session_intent_last": "corpus storage + topic-scoped comparison + per-paragraph service page",
+  "session_intent_last": "user-friendly redesign of the service page; DOCX input; student works",
   "open_bugs": [],
   "open_tasks": [
     {
@@ -57,7 +57,7 @@
     }
   ],
   "pending_verification": [],
-  "last_change": "CorpusStore (SQLite), article_report, article_api, static/article.html; parser: two columns, trailing abstract; 145 CyberLeninka articles",
+  "last_change": "static/article.html redesign; app/services/article_docx.py; parser: TOC lines, list joining; MIN_BODY 2500",
   "key_files": {
     "app/services/article_parser.py": "single-article parser (layout-based, no models)",
     "app/analysis/lexical.py": "near-verbatim reuse (shingles), self-citation",
@@ -79,6 +79,7 @@
     "static/article.html": "service page",
     "scripts/fetch_cyberleninka.py": "download by rubric",
     "scripts/corpus_build.py": "folder -> corpus",
-    "scripts/corpus_calibrate.py": "topic LOO + support threshold"
+    "scripts/corpus_calibrate.py": "topic LOO + support threshold",
+    "app/services/article_docx.py": "DOCX work (coursework/report) -> article parser format"
   }
 }

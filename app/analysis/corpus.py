@@ -127,7 +127,7 @@ class CorpusStore:
         cur = self.db.execute(
             'INSERT INTO document(corpus_id, name, title, authors, year, url, area, area_source, area_conf,'
             ' n_chars, lang, parsed, added) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
-            (cid, name, meta.get('title') or parsed['meta'].get('title', ''),
+            (cid, name, meta.get('title') or parsed['meta'].get('title') or name,
              json.dumps(parsed['meta'].get('authors', []), ensure_ascii=False), meta.get('year'),
              meta.get('url'), area, area_source, area_conf, n_chars, parsed.get('lang', 'ru'),
              json.dumps(parsed, ensure_ascii=False), time.time()))

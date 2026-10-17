@@ -55,8 +55,11 @@ BODY_LATIN_DROP = 0.8           # абзац тела русской стать�
 BODY_LANG_LATIN = 0.6           # >60% латиницы во всём, кроме шапки, — статья на английском
 TEXT_LAYER_MIN_CHARS_PER_PAGE = 200  # меньше — скан без текстового слоя, нужен OCR
 
+_TOC_LINE = re.compile(r'(\.{4,}|…{2,})\s*\d{1,4}$')        # «Введение ........ 3»
+_TOC_TITLE = re.compile(r'^(содержание|оглавление)\.?$', re.I)
 _CAPTION = re.compile(r'^(рис(унок|\.)|таблица|табл\.|figure|fig\.|table)\s*\d', re.I)
 _LIST_ITEM = re.compile(r'^\(?\d{1,2}\)\s')
+_LIST_CONT = re.compile(r'^(\(?\d{1,2}\)|[а-яa-z]\)|[–—•·-])\s')   # «1) …», «а) …», «– …»
 _NUMBERED = re.compile(r'^(\d+(?:\.\d+)*)\.?\s+\S')
 _NUM_ONLY = re.compile(r'^\d+(?:\.\d+)*\.?$')
 _PAGE_NUM = re.compile(r'^(\d{1,4}|\d{1,4}\s*\|\s*\d{1,4}|[-–—]\s*\d{1,4}\s*[-–—])$')
@@ -426,8 +429,10 @@ def build_paragraphs(lines: list, geo: dict) -> tuple[list, float]:
                        or abs(l.size - prev.size) > 1.0
                        or hs_prev != hs_cur
                        or (hs_cur and _style(l, body) != _style(prev, body)))
+            # строка оглавления «ЗАКЛЮЧЕНИЕ ....... 82» — всегда конец абзаца (иначе следующая
+            # страница «ВВЕДЕНИЕ» прилипала к оглавлению, ВКР session 021)
             new = (new or bool(_ANCHOR_START.match(l.text)) or latin(l) != latin(prev)
-                   or l.table != prev.table)
+                   or l.table != prev.table or bool(_TOC_LINE.search(prev.text)))
         if new:
             flush()
         cur.append(l)
@@ -823,6 +828,10 @@ def assign_zones(paras: list, body_size: float) -> dict:
     sections, cur = [], None
     body_paras = paras[front_end:back_start]
     for p in body_paras:
+        # оглавление курсовых/ВКР: заголовок «СОДЕРЖАНИЕ» и строки с отточием — не текст работы
+        if _TOC_TITLE.match(p.text.strip()) or _TOC_LINE.search(p.text):
+            p.role = 'toc'
+            continue
         if _latin_ratio(p.text) > BODY_LATIN_DROP and len(p.text) > 30:
             p.role = 'foreign_lang'     # англ. аннотация/название посреди тела — не текст статьи
             continue
@@ -856,6 +865,12 @@ def assign_zones(paras: list, body_size: float) -> dict:
         if cur is None:
             cur = {'title': '(без заголовка)', 'level': 1, 'page': p.page + 1, 'paragraphs': []}
             sections.append(cur)
+        # пункт списка после ввода «…задачи:» / предыдущего пункта «…;» — часть того же абзаца:
+        # по одному пункту абзац слишком короток и для смыслового вектора, и для чтения (s021)
+        if (cur['paragraphs'] and _LIST_CONT.match(p.text)
+                and cur['paragraphs'][-1].rstrip().endswith((':', ';'))):
+            cur['paragraphs'][-1] += '\n' + p.text
+            continue
         cur['paragraphs'].append(p.text)
     return {'meta': meta, 'sections': sections}
 
