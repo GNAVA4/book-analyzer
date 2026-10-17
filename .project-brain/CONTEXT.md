@@ -1,5 +1,5 @@
 # PROJECT CONTEXT — Book Analyzer
-_Updated: 2026-10-17 session 016_
+_Updated: 2026-10-17 session 017_
 
 ## What this project is
 Этап 1 (готов, приемлемое качество): парсер книг PDF/DOCX/TXT → XML-дерево (оглавление + содержимое
@@ -40,6 +40,11 @@ qwen2.5-7b-instruct (ctx 8192), glm-ocr, text-embedding-qwen3-embedding-0.6b.
   Синтетика: дубль/пересказ/заимствование ловятся, **«вода» — нет** (нужна LLM-плотность
   утверждений). Эмбеддинги не отличают «ту же мысль» от «той же узкой темы».
   Отчёт: https://claude.ai/artifact/5Lhtj2EfpAb9sfLJQosrQu (данные — scripts/build_report_data.py).
+- Session 017: методика с формулами — `docs/semantic_methods.md` (+ раздел в отчёте).
+  Уровень утверждений `app/analysis/claims.py` на qwen3.6-35b-a3b (рассуждение выключено
+  закрытым <think> в /v1/completions — [[insight_2026-10-17_qwen36-thinking-off-via-completions]]):
+  «вода» находится; «та же мысль/та же тема» — верное направление на 5 парах.
+  Полный прогон корпуса ≈3 ч — ждёт решения user.
 
 ## Decisions that affect ALL code
 Этап 2 [ADR 004]: новизна = ДВА числа (покрытие эталона + «сверх эталона») [user]; единица —
@@ -65,6 +70,8 @@ qwen2.5-7b-instruct (ctx 8192), glm-ocr, text-embedding-qwen3-embedding-0.6b.
   «нет опоры» (OPEN).
 - GPU ≤ 90% (иначе пропадает дисплей) — модели по одной; cp1251-консоль → `_safe_print`.
   `lms load` поверх загруженной модели создаёт ВТОРОЙ экземпляр (`:2`) — сначала `lms ps`.
+  Перед qwen3.6-35b-a3b — `lms unload --all` (указание user), `-c 4096`; занимает почти всю ОЗУ —
+  после работы выгружать.
 - Не совмещать bash `&` и `run_in_background` — два процесса Python.
 - Русский текст читать с UTF-8 stdout (моджибейк = ложные диагнозы).
 - Мелкий кегль в статьях не выкидывать до разметки зон (аннотация бывает 7–8pt).

@@ -8,6 +8,8 @@ _Updated: 2026-10-17 session 015_
 | парсер статей | session_014, plan_001 (фаза 1a) |
 | лексический анализ (повторы, самоцитирование) | session_014, plan_001 (фаза 1b-лекс) |
 | смысловой анализ (эмбеддинги, новизна, самоповтор) | session_015, insight_2026-10-17_paraphrased-self-repetition, plan_001 (фаза 1b) |
+| методика и формулы | docs/semantic_methods.md, session_017 |
+| уровень утверждений (LLM), «вода» | session_017, insight_2026-10-17_qwen36-thinking-off-via-completions, app/analysis/claims.py |
 | данные: статьи, КиберЛенинка, сканы | DATA.md, session_015 |
 | инструменты / окружение | insight_2026-10-17_bash-tool-unescapes-backslash-b, insight_2026-05-28_ocr-cp1251-crash |
 | оглавление книг (каскад, fallback) | adr_003, session_004–006, bug_2026-05-29_toc-subsections-dropped, bug_2026-05-30_llm-strips-hierarchical-numbering, bug_2026-05-30_heuristic-splits-multi-line-toc-title |
@@ -36,6 +38,7 @@ _Updated: 2026-10-17 session 015_
 | 014 | 2026-10-17 | этап 2: парсер статей + лексический слой (ветка semantic-analysis) |
 | 015 | 2026-10-17 | 20 статей КиберЛенинки; парсер для старых журналов; смысловой слой |
 | 016 | 2026-10-17 | коммит; +20 статей КИМ; язык статьи; синтетическая проверка; отчёт-дашборд |
+| 017 | 2026-10-17 | методика с формулами (docs/semantic_methods.md); уровень утверждений на qwen3.6-35b-a3b |
 
 ## Plans
 | # | Title | Status |

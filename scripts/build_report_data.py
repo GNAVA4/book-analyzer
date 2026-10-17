@@ -159,8 +159,40 @@ summary[0]['center_p50'] = round(syn['center_p50'], 3)
 summary[0]['synthetic_detected'] = sum(s['detected'] == 'да' for s in synthetic)
 summary[0]['synthetic_total'] = len(synthetic)
 
+# --- уровень утверждений (scripts/claims_check.py water / pairs), если считался ---
+claims_pairs = []
+if os.path.exists('.cache/claims_water.json'):
+    with open('.cache/claims_water.json', encoding='utf-8') as f:
+        cw = json.load(f)
+    art_rows = [r for r in cw if r['kind'] == 'статья']
+    dens = np.array([r['substantive_per_1000'] for r in art_rows])
+    gsh = np.array([r['general_share'] for r in art_rows])
+    w = next(r for r in cw if r['kind'] == 'ВСТАВКА' and r['section'] == 'water')
+    summary[0].update({
+        'claims_paragraphs': len(art_rows),
+        'claims_density_p50': round(float(np.percentile(dens, 50)), 2),
+        'claims_general_p50': round(float(np.percentile(gsh, 50)), 2),
+        'water_claims': w['claims'], 'water_substantive': w['результат'] + w['факт'],
+        'water_density': round(w['substantive_per_1000'], 2),
+        'water_general_share': round(w['general_share'], 2),
+        'water_density_below_share': round(float((dens > w['substantive_per_1000']).mean()), 2),
+    })
+if os.path.exists('.cache/claims_pairs.json'):
+    with open('.cache/claims_pairs.json', encoding='utf-8') as f:
+        for r in json.load(f):
+            claims_pairs.append({'id': r['id'], 'kind': r['kind'], 'claims_a': r['claims_a'],
+                                 'same': r['same'], 'partial': r['partial'],
+                                 'shared_claims': round(r['shared_claims'], 2)})
+    by_kind = {}
+    for r in claims_pairs:
+        k = by_kind.setdefault(r['kind'], [0.0, 0])
+        k[0] += r['same'] + 0.5 * r['partial']
+        k[1] += r['claims_a']
+    for kind, (num, den) in by_kind.items():
+        summary[0][f'shared_claims_{kind}'] = round(num / den, 2) if den else 0.0
+
 for name, rows in [('summary', summary), ('articles', articles), ('coverage', coverage),
-                   ('pairs', pairs), ('synthetic', synthetic)]:
+                   ('pairs', pairs), ('synthetic', synthetic), ('claims_pairs', claims_pairs)]:
     path = os.path.join(out_dir, name + '.json')
     with open(path, 'w', encoding='utf-8') as f:
         json.dump(rows, f, ensure_ascii=False)

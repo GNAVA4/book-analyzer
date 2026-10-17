@@ -364,6 +364,15 @@ are invoked SEQUENTIALLY (GPU ≤90%). `_llm_from_text_retry` retries up to 3× 
   порог 0.82). Формульный фрагмент = доля кирилл./лат. букв < 0.70.
 - Новизна относительна корпусу — без близких соседей завышается (нужна пометка «нет опоры»).
 
+### app/analysis/claims.py (session 017)
+- Уровень утверждений через qwen3.6-35b-a3b (LM Studio). Рассуждение выключается ТОЛЬКО закрытым
+  `<think></think>` в шаблоне ChatML через `/v1/completions` (штатные параметры LM Studio не
+  передаёт). Кэш `.cache/llm_claims.jsonl`, temperature 0 (детерминированно).
+- extract_claims (результат/факт/общее/связка) → claim_profile (плотность содержательных на 1000
+  знаков, доля общих) — детектор «воды»; match_claims — построчный формат «A1 -> B3 да»,
+  отсутствующая строка = «не оценено».
+- Методика и формулы всех метрик — `docs/semantic_methods.md`.
+
 ### app/analysis/lexical.py (session 014)
 - Шинглы по 5 «основ» (первые 6 букв), containment между абзацами (асимметричный) → почти
   дословные повторы внутри статьи и между статьями; доля текста, повторённого в корпусе;
@@ -498,3 +507,4 @@ _Append only. Never delete entries._
 | 2026-06-28 | 013 | `footer_junk_lines`/`strip_junk_lines`; per-page watermark strip from CONTENT (decoupled); 0.60 page-fraction | «Библиотека БГУИР» (787×) polluted content; full_text-strip churned page_cut; 0.30 deleted real content |
 | 2026-10-17 | 014 | ЭТАП 2: `article_parser.py` (статья без оглавления, по вёрстке) + `app/analysis/lexical.py` | Новая задача — семантический анализ статей (ADR 004); статьи грузятся поодиночке |
 | 2026-10-17 | 015 | article_parser: режим «старый журнал» (опора на название); `app/analysis/semantic.py` (эмбеддинги); numpy | 18/20 статей КиберЛенинки ломали шапку; пересказ не ловится шинглами |
+| 2026-10-17 | 016–017 | язык статьи, литература без номеров; `app/analysis/claims.py` (LLM-утверждения); docs/semantic_methods.md | статьи КИМ; «вода» не ловится эмбеддингами |
