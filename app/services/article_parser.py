@@ -28,11 +28,13 @@ import fitz
 # --- Пороги вёрстки (в pt). Подобраны на 5 статьях articles/ (2026-10-17). ---
 NOISE_BAND_FRACTION = 0.09      # верх/низ страницы, где живут колонтитулы
 SAME_LINE_DY = 2.0              # строки ближе по вертикали — одна строка (выключка)
-# Двухколоночная страница: промежуток, разделяющий ≥40% рядов страницы (и не меньше 8).
+# Двухколоночная страница: промежуток, разделяющий ≥40% рядов на участке от первой до последней
+# разделённой строки (и не меньше 8 рядов).
 # В одноколоночном тексте случайный x попадает в пробел между словами примерно в 10–20%
 # рядов; в двух колонках — почти во всех, кроме рядов во всю ширину (шапка, рисунки).
 COLUMN_ROW_SHARE = 0.4
 COLUMN_MIN_ROWS = 8
+COLUMN_RUN_GAP = 3       # разрыв в серии разделённых строк (подпись/формула во всю ширину)
 PARA_GAP_FACTOR = 1.6           # интервал > 1.6 × обычного → новый абзац
 INDENT_MIN, INDENT_MAX = 6, 60  # абзацный отступ первой строки
 SHORT_LINE_SLACK = 40           # строка короче правого поля на 40pt → конец абзаца
@@ -55,6 +57,7 @@ BODY_LATIN_DROP = 0.8           # абзац тела русской стать�
 BODY_LANG_LATIN = 0.6           # >60% латиницы во всём, кроме шапки, — статья на английском
 TEXT_LAYER_MIN_CHARS_PER_PAGE = 200  # меньше — скан без текстового слоя, нужен OCR
 
+_INLINE_HYPHEN = re.compile(r'(?<=[а-яё])- (?=[а-яё])')
 _TOC_LINE = re.compile(r'(\.{4,}|…{2,})\s*\d{1,4}$')        # «Введение ........ 3»
 _TOC_TITLE = re.compile(r'^(содержание|оглавление)\.?$', re.I)
 _CAPTION = re.compile(r'^(рис(унок|\.)|таблица|табл\.|figure|fig\.|table)\s*\d', re.I)
@@ -190,8 +193,8 @@ def _find_gutter(rows: list, width: float):
         return None
     best, best_x = 0, None
     for x in range(int(width * 0.3), int(width * 0.7)):
-        score = 0
-        for row in rows:
+        hits = []
+        for k, row in enumerate(rows):
             left = right = False
             for b, _ in row:
                 if b[0] < x < b[2]:
@@ -199,12 +202,24 @@ def _find_gutter(rows: list, width: float):
                 left |= b[2] <= x
                 right |= b[0] >= x
             else:
-                score += left and right
-        if score > best:
-            best, best_x = score, x
-    if best >= COLUMN_MIN_ROWS and best >= COLUMN_ROW_SHARE * len(rows):
-        return best_x
-    return None
+                if left and right:
+                    hits.append(k)
+        # долю считаем на участке, где колонки есть: самая длинная серия разделённых строк с
+        # разрывами ≤ COLUMN_RUN_GAP. На первой странице над колонками идут шапка и аннотация во
+        # всю ширину (и колонтитул, тоже «разделённый») — по всей странице колонок было 30% строк,
+        # и строки двух колонок перемешивались (s023, разметка user)
+        run, runs = [], []
+        for k in hits:
+            if run and k - run[-1] > COLUMN_RUN_GAP:
+                runs.append(run)
+                run = []
+            run.append(k)
+        if run:
+            runs.append(run)
+        for r in runs:
+            if len(r) >= COLUMN_MIN_ROWS and len(r) >= COLUMN_ROW_SHARE * (r[-1] - r[0] + 1) and len(r) > best:
+                best, best_x = len(r), x
+    return best_x
 
 
 def _column_order(rows: list, width: float) -> list:
@@ -442,7 +457,9 @@ def build_paragraphs(lines: list, geo: dict) -> tuple[list, float]:
         text = p.lines[0].text
         for l in p.lines[1:]:
             text = _join(text, l.text)
-        p.text = text.strip()
+        # перенос внутри строки текстового слоя: «конфигу- рация», «маршру- тизаторы» (s023, user:
+        # «криво написанные слова»); дефис+пробел+строчная после строчной — в русском тексте перенос
+        p.text = _INLINE_HYPHEN.sub('', text.strip())
         p.page = p.lines[0].page
         p.size = statistics.median(l.size for l in p.lines)
         p.bold = all(l.bold for l in p.lines)

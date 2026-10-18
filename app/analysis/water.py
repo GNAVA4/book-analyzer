@@ -15,6 +15,7 @@
 """
 import hashlib
 import json
+import re
 import sqlite3
 import subprocess
 import threading
@@ -28,6 +29,14 @@ LLM_LOAD = [C.LLM_MODEL, '-c', '4096', '--parallel', '1']     # session 017/022:
 EMBED_LOAD = [EMBED_MODEL, '-c', '8192']                       # [user, s022]
 MIN_PARA = 200               # короче — подписи, обрывки: утверждений не даёт (claims_corpus.MIN_PARA)
 WATERY_GENERAL_SHARE = 0.5   # как в scripts/claims_corpus.py
+# Не проза (s023, по разметке user): 7 из 8 его «не могу сказать», 0 ложных на 32 остальных.
+# подпись: «Рис. 7», «б Рис. 7» (буква подрисунка — строчная), но не «В табл. 1 представлен…»
+_CAPTION = re.compile(r'^(?:[а-яa-z]\)?\s+)?(?:[Рр]ис\.|[Рр]исунок|[Тт]аблица|[Тт]абл\.|[Ff]ig\.?)\s*\d')
+_STEP = re.compile(r'^(шаг|этап)\s*\d+[.:)]', re.I)
+_LEGEND = re.compile(r"^(\(\d+\)\s*)?где\s|^[A-Za-zα-ωΑ-Ω][\w′'*^]{0,3}\s*[–—-]\s", re.I)
+_WORD3 = re.compile(r'[а-яёa-z]{3,}', re.I)
+TABLE_DIGIT_SHARE = 0.3      # цифр среди непробельных символов: проза ≈ 0–10%, таблицы чисел — больше
+TABLE_UNIQUE_WORDS = 0.55    # доля разных слов: в прозе ≥0.7, в строках таблиц заголовки повторяются
 RETRIES, RETRY_PAUSE = 3, 15  # повтор запроса к LLM при сбое; 15 с — время на освобождение памяти
 
 _SCHEMA = """CREATE TABLE IF NOT EXISTS para_claims (
@@ -38,8 +47,27 @@ def text_hash(t: str) -> str:
     return hashlib.sha1(t.encode('utf-8')).hexdigest()
 
 
+def not_prose(t: str):
+    """Причина, по которой абзац — не проза (на воду не проверяется), или None.
+    Правила по разметке user (s023): все его «не могу сказать» — подписи, расшифровки формул,
+    шаги алгоритмов, строки таблиц; «такие штуки водой считать не надо, это точно» [user]."""
+    if _CAPTION.match(t):
+        return 'подпись к рисунку или таблице'
+    if _STEP.match(t):
+        return 'шаг алгоритма'
+    if _LEGEND.match(t):
+        return 'расшифровка обозначений формулы'
+    ns = [c for c in t if not c.isspace()]
+    if ns and sum(c.isdigit() for c in ns) / len(ns) > TABLE_DIGIT_SHARE:
+        return 'таблица чисел'
+    w = [x.lower() for x in _WORD3.findall(t)]
+    if len(w) >= 20 and len(set(w)) / len(w) < TABLE_UNIQUE_WORDS:
+        return 'таблица (повторяющиеся заголовки)'
+    return None
+
+
 def eligible(t: str) -> bool:
-    return len(t) >= MIN_PARA and not is_formula(t)
+    return len(t) >= MIN_PARA and not is_formula(t) and not_prose(t) is None
 
 
 def profile(claims: list, chars: int) -> dict:

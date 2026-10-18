@@ -8,6 +8,16 @@ from app.analysis.water import WATERY_GENERAL_SHARE, eligible, lookup, profile, 
 from tests.test_corpus import MATH, doc, store  # noqa: F401 — фикстура store
 
 
+# неповторяющаяся проза: текст вида «фраза × 3» правило «таблица (повторяющиеся заголовки)» отсекает
+P_DENSE = ('Рассмотрим дифференциальное уравнение второго порядка с непрерывной правой частью. '
+           'Доказано, что решение существует и единственно на отрезке, если коэффициенты ограничены. '
+           'Для численного решения применяется неявная схема Эйлера с шагом h, устойчивая при любых h. '
+           'Погрешность метода убывает линейно с уменьшением шага, что подтверждено экспериментами.')
+P_WATER = ('Данная тема является чрезвычайно актуальной и важной для современной науки и практики. '
+           'Большое внимание уделяется разработке новых подходов, которые позволят повысить эффективность. '
+           'Перспективы дальнейших исследований представляются весьма значительными и многообещающими.')
+
+
 def put_claims(db, text, claims):
     lookup(db, [])                                       # создаёт таблицу
     db.execute('INSERT OR REPLACE INTO para_claims VALUES (?,?,?,?,?)',
@@ -24,11 +34,13 @@ def test_profile_watery_flag():
 
 
 def test_eligible():
-    assert not eligible('Коротко.') and eligible(MATH * 3)
+    assert not eligible('Коротко.') and eligible(P_DENSE)
+    assert not eligible(MATH * 3)                                    # повтор фразы — как строки таблицы
+    assert not eligible('где Q — расход через отверстие; N — число отверстий; w — скорость потока. ' * 3)
 
 
 def test_report_attaches_water_and_substantive_novelty(store):  # noqa: F811
-    p0, p1 = MATH * 3, MATH * 2 + 'Это очень актуально и важно для дальнейших исследований. ' * 4
+    p0, p1 = P_DENSE, P_WATER
     put_claims(store.db, p0, [{'claim': 'x', 'type': 'факт'}])
     put_claims(store.db, p1, [{'claim': 'y', 'type': 'общее'}, {'claim': 'z', 'type': 'связка'}])
     rep = analyze_article(doc('Новая', p0, p1), store, 'cl')
@@ -36,10 +48,12 @@ def test_report_attaches_water_and_substantive_novelty(store):  # noqa: F811
     assert a['water'] and not a['water']['watery'] and b['water']['watery']
     s = rep['summary']
     assert s['water_checked'] == 2 and 0 < s['watery_share'] < 1
-    assert s['novelty_substantive'] == a['novelty']      # водянистый абзац в новизну не входит
+    # водянистый абзац в новизну не входит; без опоры в корпусе новизны нет вовсе
+    assert s['novelty_substantive'] == (a['novelty'] if a['support'] else None)
 
 
 def test_labels_generate_once_and_save(store):  # noqa: F811
+    store.add_document('cl', 'prose', doc('Проза', P_DENSE, P_WATER), area='Математика')
     n1 = labels.generate(store, ['cl'])
     n2 = labels.generate(store, ['cl'])
     assert n1 == n2 and n1.get('water', 0) > 0

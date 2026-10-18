@@ -530,3 +530,4 @@ _Append only. Never delete entries._
 | 2026-10-18 | 020 | Сервис статей: CorpusStore (SQLite), article_report, article_api, static/article.html; парсер — колонки и аннотация в конце | Переход от скриптов к сервису; ADR 005 |
 | 2026-10-18 | 021 | article_docx.py; страница сервиса переделана; оглавления/списки в парсере статей | Удобство для пользователя, курсовые/ВКР на входе |
 | 2026-10-18 | 023 | water.py (фоновая проверка воды), labels.py + label.html, document.journal | Вода в сервисе, калибровка разметкой |
+| 2026-10-18 | 024 | Колонки: серия разделённых строк; _INLINE_HYPHEN; water.not_prose; corpus_build --reparse | Перемешанные колонки на 1-й странице (разметка user) |

@@ -93,6 +93,15 @@ class TestColumns:
         xs = [part[0][0][0] for part in order]
         assert xs == [50] + [50] * 10 + [310] * 10
 
+    def test_columns_below_full_width_header(self):
+        # 1-я страница: колонтитул (тоже «разделён»), 20 строк шапки во всю ширину, потом 10 строк колонок
+        rows = [self.row(30, (50, 200), (400, 550))]
+        rows += [self.row(50 + 12 * i, (50, 550)) for i in range(20)]
+        rows += [self.row(300 + 12 * i, (50, 290), (310, 550)) for i in range(10)]
+        order = _column_order(rows, 600)
+        tail = [part[0][0][0] for part in order][-20:]
+        assert tail == [50] * 10 + [310] * 10
+
     def test_justified_single_column_untouched(self):
         # выключка: слова — отдельные фрагменты, пробелы в случайных местах
         import random
@@ -227,3 +236,9 @@ class TestZones:
         assert m['keywords'] == ['мивар', 'миварные сети', 'логический вывод']
         assert len(m['references']) == 2 and m['references'][1].endswith('С.687-694.')
         assert [s['title'] for s in res['sections']] == ['Введение']
+
+
+def test_inline_hyphen_joined():
+    from app.services.article_parser import _INLINE_HYPHEN
+    assert _INLINE_HYPHEN.sub('', 'модель конфигу- рации и маршру- тизаторы') == 'модель конфигурации и маршрутизаторы'
+    assert _INLINE_HYPHEN.sub('', 'метод A- B и Москва - Петербург') == 'метод A- B и Москва - Петербург'

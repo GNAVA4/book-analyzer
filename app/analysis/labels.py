@@ -39,11 +39,11 @@ def init(db):
     db.executescript(_SCHEMA)
 
 
-def _docs(store, corpora):
+def _docs(store, corpora, min_chunks=2):
     out = []
     for name in corpora:
         try:
-            out += [(name, d) for d in store.index(name)['docs'].values() if len(d['Mk']) >= 2]
+            out += [(name, d) for d in store.index(name)['docs'].values() if len(d['Mk']) >= min_chunks]
         except KeyError:
             continue
     return out
@@ -97,7 +97,7 @@ def generate(store, corpora: list) -> dict:
                              ('pairs', json.dumps(payload, ensure_ascii=False), time.time()))
     if not have.get('water'):
         paras = []
-        for cname, d in docs:
+        for cname, d in _docs(store, corpora, min_chunks=0):     # абзацам фрагменты не нужны
             parsed = json.loads(d['parsed'])
             for s in parsed['sections']:
                 for t in s['paragraphs']:
