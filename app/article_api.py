@@ -13,6 +13,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from app.analysis.article_report import analyze_article
 from app.analysis.corpus import CorpusStore
+from app.analysis.water import WaterJob
 from app.services.article_docx import parse_article_docx
 from app.services.article_parser import parse_article_pdf
 
@@ -21,11 +22,28 @@ _store = None
 _lock = threading.Lock()
 
 
+_water = None
+
+
 def store() -> CorpusStore:
     global _store
     if _store is None:
         _store = CorpusStore()
     return _store
+
+
+def water() -> WaterJob:
+    global _water
+    if _water is None:
+        _water = WaterJob(store())
+    return _water
+
+
+def _need_embedder():
+    if water().busy():
+        raise HTTPException(503, 'Идёт проверка на воду: видеокарта занята большой моделью, эмбеддер '
+                                 'выгружен. Новые файлы можно будет проверить после её окончания '
+                                 '(или остановите проверку). Документы корпуса открываются и сейчас.')
 
 
 @router.get('/corpora')
@@ -71,6 +89,7 @@ def analyze_upload(file: UploadFile = File(...), corpus: str = Form(...), scope:
         os.remove(path)
     if not parsed['sections']:
         raise HTTPException(422, 'Не удалось выделить текст работы: ' + '; '.join(parsed['warnings']))
+    _need_embedder()
     if parsed.get('needs_ocr'):
         raise HTTPException(422, 'Скан без текстового слоя — нужен OCR (пока не поддерживается)')
     try:
@@ -98,3 +117,76 @@ def analyze_corpus_document(doc_id: int, corpus: str, scope: str = 'topic'):
     report['file'] = row['name']
     report['doc_id'] = doc_id
     return report
+
+
+# --- «вода» (app/analysis/water.py) ---------------------------------------
+
+@router.get('/water/status')
+def water_status():
+    return water().state
+
+
+@router.post('/water/start')
+def water_start(payload: dict):
+    """payload: {texts: [...], label: '...'} — абзацы открытого документа."""
+    return water().start(payload.get('texts') or [], payload.get('label') or 'документ')
+
+
+@router.post('/water/start-corpus')
+def water_start_corpus(payload: dict):
+    """payload: {corpora: ['...']} — все абзацы всех документов этих корпусов (по порядку)."""
+    texts, names = [], payload.get('corpora') or []
+    for name in names:
+        for (parsed,) in store().db.execute(
+                'SELECT d.parsed FROM document d JOIN corpus c ON c.id = d.corpus_id WHERE c.name=? ORDER BY d.id', (name,)):
+            d = json.loads(parsed)
+            texts += [t for s in d['sections'] for t in s['paragraphs']]
+    return water().start(texts, 'корпуса: ' + ', '.join(names))
+
+
+@router.post('/water/stop')
+def water_stop():
+    water().stop()
+    return water().state
+
+
+@router.post('/water/profiles')
+def water_profiles(payload: dict):
+    """payload: {texts: [...]} → {sha1: профиль} для проверенных абзацев."""
+    return water().lookup(payload.get('texts') or [])
+
+
+@router.post('/water/pending')
+def water_pending(payload: dict):
+    texts = payload.get('texts') or []
+    pend = water().pending(texts)
+    return {'pending': len(pend), 'pending_chars': sum(len(t) for t in pend)}
+
+
+# --- разметка (app/analysis/labels.py, static/label.html) -----------------
+
+@router.post('/label/generate')
+def label_generate(payload: dict):
+    from app.analysis import labels
+    return labels.generate(store(), payload.get('corpora') or [])
+
+
+@router.get('/label/items')
+def label_items(kind: str, annotator: str):
+    from app.analysis import labels
+    return {'items': labels.items(store().db, kind, annotator), 'labels': labels.LABELS[kind]}
+
+
+@router.post('/label')
+def label_save(payload: dict):
+    from app.analysis import labels
+    if not (payload.get('annotator') or '').strip():
+        raise HTTPException(422, 'Укажите имя разметчика')
+    labels.save(store().db, int(payload['item_id']), payload['annotator'].strip(), payload['value'])
+    return {'ok': True}
+
+
+@router.get('/label/report')
+def label_report():
+    from app.analysis import labels
+    return labels.report(store().db)

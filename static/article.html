@@ -9,7 +9,7 @@
   --bg:#f5f6f8; --card:#ffffff; --ink:#1c1f24; --ink2:#4a5059; --muted:#7a818c; --line:#e4e7ec; --soft:#f0f2f5;
   --accent:#2f5bd3; --accent-soft:#e8eefc;
   --c-same:#d64545; --c-close:#e8952f; --c-topic:#4f7be8; --c-none:#c3c8d0;
-  --c-rep:#e8952f; --c-verb:#d64545;
+  --c-rep:#e8952f; --c-verb:#d64545; --c-water:#9b59b6; --c-dense:#2e9e6a;
   --sel:#fff6d9; --shadow:0 1px 2px rgba(16,24,40,.06),0 1px 3px rgba(16,24,40,.08);
 }
 @media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
@@ -63,7 +63,7 @@ select{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8p
 .spinner{display:inline-block;width:14px;height:14px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;vertical-align:-2px;margin-right:6px}
 @keyframes spin{to{transform:rotate(360deg)}}
 
-.intro{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:28px}
+.intro{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:28px}
 .intro .card{padding:18px}
 .intro h3{margin:0 0 6px;font-size:15px}
 .intro p{margin:0;font-size:14px;color:var(--ink2)}
@@ -76,7 +76,13 @@ select{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8p
 .tag{font-size:13px;font-weight:600;padding:3px 10px;border-radius:12px;background:var(--accent-soft);color:var(--accent)}
 details.warn{margin-top:10px;font-size:13px;color:var(--ink2)}
 details.warn summary{cursor:pointer;color:var(--c-close)}
-.metrics{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:16px;margin-bottom:16px}
+.metrics{display:grid;grid-template-columns:2fr 1.3fr 1fr 1fr 1fr;gap:16px;margin-bottom:16px}
+.progress{height:8px;border-radius:4px;background:var(--soft);overflow:hidden;margin:8px 0 4px}.progress i{display:block;height:100%;background:var(--c-water)}
+.jobpill{display:none;align-items:center;gap:8px;font-size:13px;padding:6px 12px;border-radius:20px;background:color-mix(in srgb,var(--c-water) 14%,transparent);color:var(--ink2)}
+.jobpill.on{display:flex}
+.claim{font-size:13px;margin:4px 0;padding-left:8px;border-left:3px solid var(--line)}
+.claim b{font-size:11px;font-weight:600;padding:0 6px;border-radius:8px;margin-right:6px;background:var(--soft)}
+.lab em.water{background:color-mix(in srgb,var(--c-water) 16%,transparent);color:var(--c-water)}
 .metric{padding:16px 18px}
 .metric h3{margin:0;font-size:13px;font-weight:600;color:var(--ink2);display:flex;justify-content:space-between;gap:8px}
 .metric .big{font-size:30px;font-weight:700;margin:6px 0 2px;line-height:1.1}
@@ -152,6 +158,8 @@ details.warn summary{cursor:pointer;color:var(--c-close)}
 <header class="top"><div class="wrap">
   <div class="grow"><h1>Анализ текста по корпусу</h1>
     <p>Сравнивает работу со статьями той же темы и показывает по каждому абзацу, что в нём уже где-то написано</p></div>
+  <div class="jobpill" id="jobpill"><span class="spinner"></span><span id="jobtext"></span><button class="btn link" onclick="stopWater()">остановить</button></div>
+  <a class="btn ghost" href="/label.html" style="text-decoration:none">Разметка</a>
   <button class="btn ghost" onclick="openHelp()">Как читать результаты</button>
 </div></header>
 
@@ -193,6 +201,8 @@ details.warn summary{cursor:pointer;color:var(--c-close)}
       <p>Абзацы, которые пересказывают другие абзацы этой же работы, — частый признак «воды» и затянутости.</p></div>
     <div class="card"><h3><span class="dot" style="background:var(--c-verb)"></span>Есть ли дословные совпадения</h3>
       <p>Куски текста, совпадающие почти слово в слово с корпусом или с другим местом работы.</p></div>
+    <div class="card"><h3><span class="dot" style="background:var(--c-water)"></span>Много ли «воды»</h3>
+      <p>Языковая модель разбирает каждый абзац на утверждения и смотрит, сколько из них — конкретика, а сколько — общие слова.</p></div>
   </section>
 
   <section id="result" hidden>
@@ -233,6 +243,17 @@ details.warn summary{cursor:pointer;color:var(--c-close)}
   <p>Доля текста в абзацах, у которых есть смысловой двойник в другом месте этой же работы (не соседний абзац, похожесть 0,82 и выше). С аннотацией не сравниваем — она обязана пересказывать работу.</p>
   <h3 id="h-verb">Дословные совпадения</h3>
   <p>Доля текста в абзацах, где не меньше 30% цепочек из пяти слов подряд совпадает с абзацем статьи корпуса или с другим абзацем этой работы. Окончания слов не учитываются, поэтому смена падежа совпадение не скрывает.</p>
+  <h3 id="h-water">Вода</h3>
+  <p>Большая языковая модель (Qwen) разбирает абзац на отдельные утверждения и помечает каждое:</p>
+  <ul>
+    <li><b>результат</b> — что получили сами авторы (доказали, измерили, предложили);</li>
+    <li><b>факт</b> — конкретное проверяемое знание: определение, метод, чужой результат;</li>
+    <li><b>общее</b> — слова без конкретики: «актуально», «позволяет повысить эффективность»;</li>
+    <li><b>связка</b> — анонсы и пересказ плана: «в статье рассмотрено», «далее описано».</li>
+  </ul>
+  <p>Абзац считается <b>водянистым</b>, если общих слов и связок — половина утверждений или больше. <b>Плотность</b> — число результатов и фактов на 1000 знаков (у обычных научных абзацев около 8–12, у «воды» 1–3).</p>
+  <p>Проверка медленная — около 6 секунд на абзац, поэтому запускается кнопкой. Абзацы короче 200 знаков и формулы не проверяются. Проверенные абзацы запоминаются: повторно их проверять не нужно.</p>
+  <p>Когда вода проверена, <b>новизна</b> считается только по содержательным абзацам — иначе водянистый абзац на редкую тему выглядел бы «новым».</p>
   <h3 id="h-self">Самоцитирование</h3>
   <p>Доля пунктов списка литературы, среди авторов которых есть автор работы.</p>
   <h3>Тема и уверенность</h3>
@@ -335,7 +356,8 @@ async function run(fn, msg) {
   $('go').disabled = true; status(msg, false, true);
   try {
     R = await fn(); status('');
-    render();
+    waterPending = null;
+    render(); refreshPending().catch(() => {});
     $('setup').hidden = true; $('intro').hidden = true; $('result').hidden = false;
     window.scrollTo({top: 0});
   } catch (e) { status(e.message, true); $('setup').hidden = false }
@@ -357,19 +379,7 @@ function render() {
       <span class="muted">${a.source === 'авто' ? `определена автоматически, уверенность ${pct(a.confidence)}${votes ? ' (голоса: ' + votes + ')' : ''}` : 'указана вручную'}</span></div>
     ${m.warnings.length ? `<details class="warn"><summary>Замечания при разборе файла (${m.warnings.length})</summary><ul>${m.warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul></details>` : ''}`;
 
-  const d = dist(R.paragraphs);
-  $('metrics').innerHTML = `
-    <div class="card metric"><h3>Похожесть на корпус <button class="qm" title="Что это значит" onclick="openHelp('h-sim')">?</button></h3>
-      ${stack(d)}
-      <div class="legend">${CATS.map(c => `<span><i class="dot" style="background:${c.color}"></i>${c.name} — <b>${pct(d[c.k])}</b></span>`).join('')}</div>
-      <p style="margin-top:8px">Доля текста по похожести на самое близкое место в статьях корпуса.
-        Новизна там, где есть с чем сравнить: <b>${num(s.novelty)}</b> <button class="qm" title="Что это значит" onclick="openHelp('h-nov')">?</button></p></div>
-    <div class="card metric"><h3>Повторы внутри работы <button class="qm" title="Что это значит" onclick="openHelp('h-rep')">?</button></h3>
-      <div class="big">${pct(s.repeat_share)}</div><p>текста пересказывает другие места этой же работы</p></div>
-    <div class="card metric"><h3>Дословные совпадения <button class="qm" title="Что это значит" onclick="openHelp('h-verb')">?</button></h3>
-      <div class="big">${pct(s.verbatim_share)}</div><p>текста почти слово в слово совпадает с корпусом или с другим местом работы</p></div>
-    <div class="card metric"><h3>Самоцитирование <button class="qm" title="Что это значит" onclick="openHelp('h-self')">?</button></h3>
-      <div class="big">${m.references ? pct(s.self_citation) : '—'}</div><p>${m.references ? `источников из ${m.references} — работы самого автора` : 'список литературы не найден'}</p></div>`;
+  renderMetrics();
 
   let side = '<h4>Структура работы</h4><div class="toc">';
   R.sections.forEach(sec => {
@@ -386,14 +396,105 @@ function render() {
     <li>Здесь появится самое похожее место в корпусе, повторы и совпадения.</li></ol></div>`;
 }
 
+// ---------- вода ----------
+function waterSum(ps) {
+  const elig = ps.filter(p => p.water_eligible), checked = elig.filter(p => p.water);
+  const cc = checked.reduce((a, p) => a + p.chars, 0) || 1;
+  const subst = checked.filter(p => p.support && !p.water.watery && p.novelty != null);
+  const dens = checked.map(p => p.water.density).sort((a, b) => a - b);
+  return {elig: elig.length, checked: checked.length,
+    watery: checked.length ? checked.filter(p => p.water.watery).reduce((a, p) => a + p.chars, 0) / cc : null,
+    density: dens.length ? dens[Math.floor(dens.length / 2)] : null,
+    novelty: subst.length ? subst.reduce((a, p) => a + p.novelty, 0) / subst.length : null};
+}
+let waterPending = null, job = {running: false};
+const postJSON = (url, body) => api(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+async function refreshPending() {
+  const r = await postJSON('/api/water/pending', {texts: R.paragraphs.map(p => p.text)});
+  waterPending = r.pending; renderMetrics();
+}
+async function startWater() {
+  const r = await postJSON('/api/water/start', {texts: R.paragraphs.map(p => p.text), label: R.meta.title || R.file});
+  if (!r.ok) alert(r.reason);
+  job = r.state; renderMetrics(); pollWater();
+}
+async function stopWater() { job = await api('/api/water/stop', {method: 'POST'}); showJob() }
+const hrs = sec => sec > 5400 ? `~${Math.round(sec / 3600)} ч` : `~${Math.max(1, Math.round(sec / 60))} мин`;
+function showJob() {
+  const on = job.running;
+  $('jobpill').classList.toggle('on', !!on);
+  if (on) {
+    const left = (job.total - job.done) * (job.sec_per_para || 6);
+    const ph = {queued: 'в очереди', loading: 'загружаю модель', restoring: 'возвращаю эмбеддер'}[job.phase];
+    $('jobtext').textContent = `Вода: ${job.done} из ${job.total} абзацев · ${ph || 'осталось ' + hrs(left)} (${(job.label || '').slice(0, 40)})`;
+  }
+}
+let pollTimer = null, wasRunning = false;
+async function pollWater() {
+  clearTimeout(pollTimer);
+  try { job = await api('/api/water/status') } catch { pollTimer = setTimeout(pollWater, 15000); return }
+  showJob();
+  if (R && (job.running || wasRunning)) {
+    const todo = R.paragraphs.filter(p => p.water_eligible && !p.water);
+    const prof = await postJSON('/api/water/profiles', {texts: todo.map(p => p.text)});
+    let changed = false;
+    for (const p of todo) {
+      const h = await sha1(p.text);
+      if (prof[h]) { p.water = prof[h]; changed = true }
+    }
+    if (changed || wasRunning !== job.running) { await refreshPending(); renderDoc() }
+    else renderMetrics();
+  }
+  wasRunning = job.running;
+  pollTimer = setTimeout(pollWater, job.running ? 4000 : 15000);
+}
+async function sha1(t) {
+  const b = await crypto.subtle.digest('SHA-1', new TextEncoder().encode(t));
+  return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join('');
+}
+
+function renderMetrics() {
+  if (!R) return;
+  const m = R.meta, s = R.summary, d = dist(R.paragraphs), w = waterSum(R.paragraphs);
+  const todo = waterPending ?? (w.elig - w.checked);
+  let wcard;
+  if (job.running) wcard = `<div class="progress"><i style="width:${job.total ? job.done / job.total * 100 : 0}%"></i></div>
+      <p>идёт проверка: ${job.done} из ${job.total} абзацев (${esc((job.label || '').slice(0, 50))})</p>
+      <button class="btn ghost" style="margin-top:8px" onclick="stopWater()">Остановить</button>`;
+  else if (w.checked) wcard = `<div class="big">${pct(w.watery)}</div><p>текста — водянистые абзацы · плотность ${num(w.density, 1)} утв. на 1000 знаков
+      · проверено ${w.checked} из ${w.elig} абзацев</p>
+      ${todo ? `<button class="btn ghost" style="margin-top:8px" onclick="startWater()">Проверить остальные ${todo} (${hrs(todo * 6)})</button>` : ''}`;
+  else wcard = `<p style="margin:8px 0">Ещё не проверено. Языковая модель разберёт ${todo} абзацев на утверждения —
+      это займёт ${hrs(todo * 6)}. Пока идёт проверка, новые файлы загружать нельзя.</p>
+      <button class="btn" onclick="startWater()">Проверить на воду</button>`;
+  const novTxt = w.novelty != null
+    ? `Новизна по содержательным абзацам (есть опора в корпусе, не вода): <b>${num(w.novelty)}</b>`
+    : `Новизна там, где есть с чем сравнить: <b>${num(s.novelty)}</b>`;
+  $('metrics').innerHTML = `
+    <div class="card metric"><h3>Похожесть на корпус <button class="qm" title="Что это значит" onclick="openHelp('h-sim')">?</button></h3>
+      ${stack(d)}
+      <div class="legend">${CATS.map(c => `<span><i class="dot" style="background:${c.color}"></i>${c.name} — <b>${pct(d[c.k])}</b></span>`).join('')}</div>
+      <p style="margin-top:8px">Доля текста по похожести на самое близкое место в статьях корпуса.
+        ${novTxt} <button class="qm" title="Что это значит" onclick="openHelp('h-nov')">?</button></p></div>
+    <div class="card metric"><h3>Вода <button class="qm" title="Что это значит" onclick="openHelp('h-water')">?</button></h3>${wcard}</div>
+    <div class="card metric"><h3>Повторы внутри работы <button class="qm" title="Что это значит" onclick="openHelp('h-rep')">?</button></h3>
+      <div class="big">${pct(s.repeat_share)}</div><p>текста пересказывает другие места этой же работы</p></div>
+    <div class="card metric"><h3>Дословные совпадения <button class="qm" title="Что это значит" onclick="openHelp('h-verb')">?</button></h3>
+      <div class="big">${pct(s.verbatim_share)}</div><p>текста почти слово в слово совпадает с корпусом или с другим местом работы</p></div>
+    <div class="card metric"><h3>Самоцитирование <button class="qm" title="Что это значит" onclick="openHelp('h-self')">?</button></h3>
+      <div class="big">${m.references ? pct(s.self_citation) : '—'}</div><p>${m.references ? `источников из ${m.references} — работы самого автора` : 'список литературы не найден'}</p></div>`;
+}
+
 const MODES = {
   sim: {name: 'Похожесть на корпус', legend: () => CATS.map(c => [c.color, c.name])},
   rep: {name: 'Повторы внутри работы', legend: () => [['var(--c-rep)', 'пересказывает другое место работы'], ['var(--c-verb)', 'дословно повторяет другое место'], ['var(--c-none)', 'нет повторов']]},
   verb: {name: 'Дословно из корпуса', legend: () => [['var(--c-verb)', 'совпадает со статьёй корпуса'], ['var(--c-none)', 'нет совпадений']]},
+  water: {name: 'Вода', legend: () => [['var(--c-water)', 'водянистый абзац'], ['var(--c-dense)', 'по делу'], ['var(--c-none)', 'не проверен'], ['var(--line)', 'короткий — не проверяется']]},
 };
 function color(p) {
   if (mode === 'sim') return p.sim == null ? 'var(--line)' : cat(p).color;
   if (mode === 'rep') return p.verbatim.some(v => !v.doc_id) ? 'var(--c-verb)' : p.repeats.length ? 'var(--c-rep)' : 'var(--c-none)';
+  if (mode === 'water') return !p.water_eligible ? 'var(--line)' : !p.water ? 'var(--c-none)' : p.water.watery ? 'var(--c-water)' : 'var(--c-dense)';
   return p.verbatim.some(v => v.doc_id) ? 'var(--c-verb)' : 'var(--c-none)';
 }
 function label(p) {
@@ -402,6 +503,8 @@ function label(p) {
   if (p.sim == null) out.push(`<em>не оценён: ${esc(p.skip)}</em>`);
   if (p.repeats.length) out.push('<em class="rep">повтор</em>');
   if (p.verbatim.length) out.push('<em class="verb">дословно</em>');
+  if (mode === 'water' && p.water) out.push(`<em>плотность ${num(p.water.density, 1)} · общих ${pct(p.water.general_share)}</em>`);
+  if (p.water && p.water.watery) out.push('<em class="water">вода</em>');
   return out.join('');
 }
 function renderDoc() {
@@ -455,6 +558,11 @@ function showCard(i) {
       : `<div class="quote click" style="border-color:var(--c-verb)" onclick="jump(${v.para})"><b>Абзац ${v.para + 1} этой работы</b> · совпадает ${pct(v.share)} абзаца</div>`);
   }
   if (!p.repeats.length && !p.verbatim.length && p.sim != null) h += '<p class="muted small">Повторов внутри работы и дословных совпадений нет.</p>';
+  if (p.water) {
+    const w = p.water, T = {'результат': 'var(--c-dense)', 'факт': 'var(--c-topic)', 'общее': 'var(--c-water)', 'связка': 'var(--c-none)'};
+    h += `<h4>Вода: ${w.watery ? 'да' : 'нет'}</h4><div class="small ink2">Утверждений ${w.claims}: содержательных ${w.substantive}, общих слов и связок ${w.general}. Плотность ${num(w.density, 1)} на 1000 знаков.</div>`;
+    w.items.forEach(c => h += `<div class="claim" style="border-color:${T[c.type] || 'var(--line)'}"><b>${esc(c.type)}</b>${esc(c.claim)}</div>`);
+  } else if (p.water_eligible) h += '<h4>Вода</h4><p class="muted small">Абзац ещё не проверен — кнопка «Проверить на воду» в итогах.</p>';
   $('detail').innerHTML = h;
 }
 function jump(i) { $('p' + i).scrollIntoView({behavior: 'smooth', block: 'center'}); showCard(i) }
@@ -495,6 +603,7 @@ async function init() {
   if (q.get('help')) openHelp();
 }
 init().catch(e => status('Нет связи с сервером: ' + e.message, true));
+pollWater();
 </script>
 </body>
 </html>

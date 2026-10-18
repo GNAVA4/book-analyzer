@@ -1,7 +1,7 @@
 {
   "project": "book-analyzer",
   "updated": "2026-10-18",
-  "session": 22,
+  "session": 23,
   "branch": "semantic-analysis",
   "stack": [
     "python3.11",
@@ -12,13 +12,18 @@
   ],
   "status": "active",
   "stage": "2 — semantic analysis (plan_001, adr_004)",
-  "session_intent_last": "qwen3.8 setup + embedder comparison",
+  "session_intent_last": "water in service + AI/CS/math corpus + labeling page",
   "open_bugs": [],
   "open_tasks": [
     {
-      "task": "claims level in the service (background queue)",
+      "task": "water run over 3 corpora (in progress), then AI corpus water [ask]",
       "priority": "high",
       "blocked_by": null
+    },
+    {
+      "task": "human labeling via label.html, then calibration",
+      "priority": "high",
+      "blocked_by": "user"
     },
     {
       "task": "topic-dense corpora for meaningful novelty (mivar collections, coursework)",
@@ -57,7 +62,7 @@
     }
   ],
   "pending_verification": [],
-  "last_change": "qwen3.8 compared with 3.6 (x3 slower, same water detection); branch pushed",
+  "last_change": "water.py, labels.py, label.html, journal fetch; water run over 3 corpora in progress",
   "key_files": {
     "app/services/article_parser.py": "single-article parser (layout-based, no models)",
     "app/analysis/lexical.py": "near-verbatim reuse (shingles), self-citation",
@@ -82,6 +87,9 @@
     "scripts/corpus_calibrate.py": "topic LOO + support threshold",
     "app/services/article_docx.py": "DOCX work (coursework/report) -> article parser format",
     "scripts/llm_compare.py": "LLM comparison on claims tasks",
-    "scripts/embed_compare.py": "embedder comparison on corpus tasks"
+    "scripts/embed_compare.py": "embedder comparison on corpus tasks",
+    "app/analysis/water.py": "water job + para_claims storage",
+    "app/analysis/labels.py": "labeling sets/answers/report",
+    "static/label.html": "labeling page"
   }
 }

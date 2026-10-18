@@ -1,5 +1,5 @@
 # PROJECT CONTEXT — Book Analyzer
-_Updated: 2026-10-18 session 022_
+_Updated: 2026-10-18 session 023_
 
 ## What this project is
 Этап 1 (готов, приемлемое качество): парсер книг PDF/DOCX/TXT → XML-дерево (оглавление + содержимое
@@ -62,6 +62,8 @@ qwen2.5-7b-instruct (ctx 8192), glm-ocr, text-embedding-qwen3-embedding-0.6b.
   MIN_BODY 2500 [user]; корпус «Студенческие работы» (ВКР + отчёт о НИР).
 - Session 022: Qwen3.8-27B — движок LM Studio ≥2.60, `--gpu 0.5 --parallel 1` (VRAM 87%); ×3 медленнее 3.6, «воду» видит так же;
   эмбеддеры 4B/bge-m3 не лучше 0.6b ([[insight_2026-10-18_embedder-comparison-no-gain]]).
+- Session 023: «вода» в сервисе (WaterJob, para_claims, кнопка/прогресс/подсветка), новизна по
+  содержательным абзацам; корпус «ИИ, информатика, математика» (274, 9 журналов); разметка label.html.
 
 ## Decisions that affect ALL code
 Этап 2 [ADR 004]: новизна = ДВА числа (покрытие эталона + «сверх эталона») [user]; единица —
@@ -79,6 +81,8 @@ qwen2.5-7b-instruct (ctx 8192), glm-ocr, text-embedding-qwen3-embedding-0.6b.
 - Метрика `real>100` — ловушка; судить по содержимому, атрибуту `chars`, набору стратегий.
 
 ## Known landmines ⚠️
+- **Не запускать полный pytest во время LLM-задач** — тесты этапа 1 JIT-грузят qwen2.5 в LM Studio
+  ([[insight_2026-10-18_pytest-triggers-lmstudio-jit]]). Перезапуск uvicorn прерывает проверку воды (продолжится с места).
 - **Правки кода через Bash: `\\b` превращается в backspace** → только Edit/Write
   ([[insight_2026-10-17_bash-tool-unescapes-backslash-b]]).
 - **pytest целиком и uvicorn: `NO_PROXY='*'`** — системный прокси Windows (socks4) ломает импорт openai.
@@ -97,6 +101,7 @@ qwen2.5-7b-instruct (ctx 8192), glm-ocr, text-embedding-qwen3-embedding-0.6b.
 ## Key file map
 - `app/analysis/corpus.py`, `app/analysis/article_report.py`, `app/article_api.py`, `static/article.html` — сервис статей (session 020–021)
 - `app/services/article_docx.py` — DOCX-работа → формат парсера статей
+- `app/analysis/water.py` (вода, фоновая задача), `app/analysis/labels.py` + `static/label.html` (разметка)
 - `scripts/fetch_cyberleninka.py`, `scripts/corpus_build.py`, `scripts/corpus_calibrate.py` — корпус
 - `app/services/article_parser.py` — парсер статьи (этап 2)
 - `app/analysis/lexical.py` — лексический слой анализа (этап 2)
@@ -107,4 +112,4 @@ qwen2.5-7b-instruct (ctx 8192), glm-ocr, text-embedding-qwen3-embedding-0.6b.
 - `app/services/pdf_parser_neural.py` — координатор книжного пайплайна
 - `app/services/toc_builder.py`, `mapping_pipeline.py`, `pdf_utils.py`, `xml_builder.py` — этап 1
 - `scripts/run_corpus.py` — прогон корпуса книг (OUT_DIR)
-- `tests/` — 385 тестов
+- `tests/` — 389 тестов

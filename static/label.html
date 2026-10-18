@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Разметка примеров</title>
+<style>
+:root{
+  --bg:#f5f6f8; --card:#ffffff; --ink:#1c1f24; --ink2:#4a5059; --muted:#7a818c; --line:#e4e7ec; --soft:#f0f2f5;
+  --accent:#2f5bd3; --accent-soft:#e8eefc; --ok:#2e9e6a; --shadow:0 1px 2px rgba(16,24,40,.06),0 1px 3px rgba(16,24,40,.08);
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#14161a; --card:#1d2025; --ink:#e8e9eb; --ink2:#b9bec6; --muted:#8a919b; --line:#2d3138; --soft:#24282e;
+  --accent:#7d9cf0; --accent-soft:#232c42; --shadow:none;
+}}
+:root[data-theme="dark"]{
+  --bg:#14161a; --card:#1d2025; --ink:#e8e9eb; --ink2:#b9bec6; --muted:#8a919b; --line:#2d3138; --soft:#24282e;
+  --accent:#7d9cf0; --accent-soft:#232c42; --shadow:none;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+button,input{font:inherit}
+a{color:var(--accent)}
+.wrap{max-width:1100px;margin:0 auto;padding:0 24px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow)}
+.muted{color:var(--muted)} .small{font-size:13px}
+.top{background:var(--card);border-bottom:1px solid var(--line)}
+.top .wrap{display:flex;align-items:center;gap:16px;padding-top:14px;padding-bottom:14px}
+.top h1{font-size:18px;margin:0} .top p{margin:0;font-size:13px;color:var(--muted)} .grow{flex:1}
+.btn{border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:8px;padding:9px 16px;cursor:pointer;font-weight:600}
+.btn.ghost{background:transparent;color:var(--accent);font-weight:500}
+.btn:disabled{opacity:.45;cursor:default}
+.intro{margin:20px 0;padding:20px 22px}
+.intro h2{margin:0 0 6px;font-size:17px}
+.intro p{margin:0 0 10px;color:var(--ink2);font-size:14px}
+.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+input[type=text]{padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);min-width:240px}
+.tabs{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+.tabs button{border:0;background:var(--card);color:var(--ink2);padding:8px 16px;cursor:pointer;border-right:1px solid var(--line)}
+.tabs button:last-child{border-right:0}
+.tabs button.on{background:var(--accent);color:#fff}
+.progress{height:8px;border-radius:4px;background:var(--soft);overflow:hidden;margin:14px 0 4px}
+.progress i{display:block;height:100%;background:var(--ok)}
+.task{padding:22px;margin-bottom:16px}
+.task h3{margin:0 0 4px;font-size:17px}
+.task .q{color:var(--ink2);font-size:14px;margin:0 0 16px}
+.pair{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.frag{background:var(--soft);border-radius:10px;padding:14px 16px;font-size:14.5px;white-space:pre-line;max-height:52vh;overflow:auto}
+.frag .h{font-size:12px;font-weight:600;color:var(--muted);margin-bottom:6px;white-space:normal}
+.answers{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:18px}
+.ans{border:2px solid var(--line);background:var(--card);color:var(--ink);border-radius:10px;padding:12px;cursor:pointer;text-align:left}
+.ans:hover{border-color:var(--accent)}
+.ans.on{border-color:var(--ok);background:color-mix(in srgb,var(--ok) 12%,transparent)}
+.ans b{display:block;font-size:15px}
+.ans span{font-size:12.5px;color:var(--muted)}
+.ans kbd{float:right;font-size:11px;border:1px solid var(--line);border-radius:4px;padding:0 5px;color:var(--muted)}
+.nav{display:flex;justify-content:space-between;align-items:center;margin-top:16px;flex-wrap:wrap;gap:10px}
+.done{padding:22px;text-align:center}
+table{border-collapse:collapse;width:100%;font-size:14px;margin-top:10px}
+td,th{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left}
+@media (max-width:800px){.pair{grid-template-columns:1fr}.answers{grid-template-columns:1fr 1fr}}
+@media (max-width:600px){.wrap{padding:0 16px}}
+</style>
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <div class="grow"><h1>Разметка примеров</h1><p>Ваши ответы — эталон, по которому проверяется, насколько можно верить автоматическим оценкам</p></div>
+  <a class="btn ghost" href="/article.html" style="text-decoration:none">← К анализу</a>
+</div></header>
+<main class="wrap">
+  <section class="card intro">
+    <h2>Зачем это нужно</h2>
+    <p>Сервис сам решает, «та же ли это мысль» и «вода ли это», но границы этих решений подобраны без проверки человеком.
+      Ответьте на несколько десятков простых вопросов — по ответам станет видно, где автоматика ошибается, и пороги подстроятся под человеческое понимание.
+      Отвечайте по первому впечатлению; если сомневаетесь — «Не могу сказать». Ответы сохраняются сразу, можно прерваться и продолжить.</p>
+    <div class="row">
+      <label class="small">Ваше имя <input type="text" id="who" placeholder="например, Руслан"></label>
+      <div class="tabs" id="tabs"><button data-k="pairs" class="on">Похожие фрагменты</button><button data-k="water">Вода</button></div>
+      <span class="small muted">Клавиши: 1–4 — ответ, ← → — назад/вперёд</span>
+    </div>
+    <div class="progress"><i id="bar" style="width:0"></i></div>
+    <div class="small muted" id="prog"></div>
+  </section>
+
+  <section class="card task" id="task"></section>
+  <section class="card done" id="done" hidden></section>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let kind = 'pairs', items = [], labels = [], pos = 0;
+const HINTS = {
+  pairs: {same: 'Утверждается одно и то же, пусть другими словами', topic: 'Об одном и том же предмете, но говорится разное', diff: 'О разных вещах', unsure: 'Не хватает знаний или контекста'},
+  water: {water: 'Общие слова, без конкретных фактов и результатов', mixed: 'Есть и конкретика, и общие слова примерно поровну', dense: 'Конкретные факты, определения, методы, результаты', unsure: 'Не хватает знаний или контекста'},
+};
+const Q = {
+  pairs: ['Это одна и та же мысль?', 'Сравните два фрагмента из научных статей. Важно не то, похожи ли слова, а утверждается ли одно и то же.'],
+  water: ['Много ли в абзаце «воды»?', 'Оцените, сколько в абзаце конкретики (факты, определения, методы, результаты), а сколько — общих слов («актуально», «важно», «позволяет повысить эффективность»).'],
+};
+async function api(url, opts) {
+  const r = await fetch(url, opts);
+  if (!r.ok) { let d; try { d = (await r.json()).detail } catch { d = r.statusText } throw new Error(d) }
+  return r.json();
+}
+const who = () => $('who').value.trim();
+try { $('who').value = localStorage.getItem('labeler') || '' } catch {}
+const qWho = new URLSearchParams(location.search).get('who');   // ссылка для разметчика: label.html?who=Имя
+if (qWho) $('who').value = qWho;
+$('who').onchange = () => { try { localStorage.setItem('labeler', who()) } catch {}; load() };
+
+async function load() {
+  if (!who()) { $('task').innerHTML = '<p class="muted">Введите имя, чтобы начать — так ответы разных людей не смешаются.</p>'; $('done').hidden = true; return }
+  const r = await api(`/api/label/items?kind=${kind}&annotator=${encodeURIComponent(who())}`);
+  items = r.items; labels = r.labels;
+  pos = items.findIndex(i => !i.value); if (pos < 0) pos = items.length;
+  show();
+}
+function progress() {
+  const n = items.filter(i => i.value).length;
+  $('bar').style.width = (items.length ? n / items.length * 100 : 0) + '%';
+  $('prog').textContent = `Отвечено ${n} из ${items.length}`;
+}
+function show() {
+  progress();
+  if (pos >= items.length) { $('task').hidden = true; showDone(); return }
+  $('task').hidden = false; $('done').hidden = true;
+  const it = items[pos], p = it.payload;
+  let body;
+  if (kind === 'pairs') body = `<div class="pair">
+      <div class="frag"><div class="h">Фрагмент А · раздел «${esc(p.a.section)}»</div>${esc(p.a.text)}</div>
+      <div class="frag"><div class="h">Фрагмент Б · раздел «${esc(p.b.section)}»${p.where === 'inner' ? ' · из той же статьи' : ''}</div>${esc(p.b.text)}</div></div>`;
+  else body = `<div class="frag"><div class="h">Раздел «${esc(p.section)}»</div>${esc(p.text)}</div>`;
+  $('task').innerHTML = `<h3>${pos + 1}. ${Q[kind][0]}</h3><p class="q">${Q[kind][1]}</p>${body}
+    <div class="answers">${labels.map(([k, t], i) => `<button class="ans ${it.value === k ? 'on' : ''}" data-v="${k}"><kbd>${i + 1}</kbd><b>${t}</b><span>${HINTS[kind][k]}</span></button>`).join('')}</div>
+    <div class="nav"><button class="btn ghost" onclick="go(-1)" ${pos ? '' : 'disabled'}>← Назад</button>
+      <span class="small muted">Пример ${pos + 1} из ${items.length}</span>
+      <button class="btn ghost" onclick="go(1)">Пропустить →</button></div>`;
+  $('task').querySelectorAll('.ans').forEach(b => b.onclick = () => answer(b.dataset.v));
+}
+async function answer(v) {
+  const it = items[pos];
+  await api('/api/label', {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({item_id: it.id, annotator: who(), value: v})});
+  it.value = v; go(1);
+}
+function go(d) { pos = Math.max(0, Math.min(items.length, pos + d)); show() }
+async function showDone() {
+  const r = await api('/api/label/report');
+  const L = Object.fromEntries(r.labels[kind]);
+  let h = `<h3>Готово — все примеры этого набора размечены. Спасибо!</h3>
+    <p class="muted small">Ниже — как ваши ответы (и ответы других разметчиков: ${esc(r.annotators.join(', '))}) соотносятся с оценками машины.</p>`;
+  if (kind === 'pairs') {
+    h += '<table><tr><th>Ответ человека</th><th>Пар</th><th>Средняя похожесть по оценке машины</th><th>Мин–макс</th></tr>' +
+      Object.entries(r.pairs).map(([k, v]) => `<tr><td>${esc(L[k] || k)}</td><td>${v.n}</td><td>${v.sim_mean.toFixed(2).replace('.', ',')}</td><td>${v.sim_min.toFixed(2)}–${v.sim_max.toFixed(2)}</td></tr>`).join('') + '</table>' +
+      '<p class="small muted">Если у «та же мысль» и «та же тема» похожесть одинаковая — машина по смыслу их не различает, и решать должна большая модель, а не похожесть.</p>';
+  } else {
+    h += '<table><tr><th>Ответ человека</th><th>Модель сказала</th><th>Абзацев</th></tr>' +
+      r.water.map(x => `<tr><td>${esc(L[x.human] || x.human)}</td><td>${esc(x.model)}</td><td>${x.n}</td></tr>`).join('') + '</table>';
+  }
+  h += `<p><button class="btn ghost" onclick="pos=0;show()">Просмотреть свои ответы</button></p>`;
+  $('done').innerHTML = h; $('done').hidden = false;
+}
+$('tabs').querySelectorAll('button').forEach(b => b.onclick = () => {
+  kind = b.dataset.k; $('tabs').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); load();
+});
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT') return;
+  if (e.key >= '1' && e.key <= '4' && pos < items.length) answer(labels[+e.key - 1][0]);
+  if (e.key === 'ArrowLeft') go(-1);
+  if (e.key === 'ArrowRight') go(1);
+});
+load().catch(e => $('task').innerHTML = `<p style="color:#d64545">${esc(e.message)}</p>`);
+</script>
+</body>
+</html>

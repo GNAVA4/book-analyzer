@@ -7,6 +7,7 @@ _Updated: 2026-10-18 session 020_
 | test/ | 19 книг PDF | user | этап 1; результаты в tests_v*/ (tests_v14 — последний) |
 | articles/ | 45 статей (одна папка) | 5 миварных (user) + 20 КиберЛенинка (nn/fuzzy/expert/ode/prob/graph) + 20 КИМ crm.ics.org.ru 2023–2025 (crm-llm/cnn/rl/pinn/cvx/stab/boltz) | 3 скана, 6 «русская шапка + английский текст» |
 | articles_cl/ | 145 PDF + .meta.json | КиберЛенинка, 7 рубрик (экономика 25, математика 25, CS 25, электротехника/ИТ 25, образование 20, физика 15, право 10), 2015+ | 20 не русские (англ./узбекские), рубрика = метка темы |
+| articles_ai/ | 324+ PDF + .meta.json (journal) | КиберЛенинка, 9 журналов ИИ/информатики/прикл. математики, 2018–2026 | ~15% англ./сканы |
 | data/corpus.db | 2 корпуса: «КиберЛенинка» 119, «Статьи этапа 2» 31 | scripts/corpus_build.py | SQLite: разбор + фрагменты + эмбеддинги |
 | .cache/report/ | 5 JSON | scripts/build_report_data.py | данные отчёта-дашборда |
 | .cache/embeddings.jsonl | ~430 векторов ×1024 | LM Studio qwen3-embedding-0.6b | ключ sha1(model+text) |
@@ -17,6 +18,8 @@ _Updated: 2026-10-18 session 020_
 - Работают страницы рубрик `/article/c/<рубрика>/<N>` → ссылки `/article/n/<slug>`;
   PDF: `/article/n/<slug>/pdf`. Пауза 1.5–2 с между запросами.
 - Рубрики по умолчанию отдают в основном СТАРЫЕ статьи (2000-е, «Известия ТРТУ/ЮФУ»).
+- Журналы: номера — JSON `issues: [...]` в странице /journal/n/<slug>; статьи номера —
+  `GET /api/issue/<id>/articles` (link, name, authors, year). Удобно для плотных тематических корпусов.
 - Новые статьи — на ДАЛЬНИХ страницах рубрики (стр. 15000 из 28134 экономики → 2016–2017);
   год виден в списке (`<span>2017 / …`). scripts/fetch_cyberleninka.py берёт последнюю треть.
 - Список: `<a href="/article/n/<slug>"><div class="title">…</div>…<span>ГОД / авторы`.

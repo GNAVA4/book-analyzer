@@ -388,6 +388,9 @@ article_report → {area, neighbours, paragraphs[sim, novelty, support, nearest,
 - Метрики по фрагментам → показываются по абзацам; опора SUPPORT_SIM=0.56 (калибровка session 020).
 - Парсер: двухколоночная вёрстка (`_find_gutter`, `_column_order`), аннотация после литературы.
 - DOCX: `app/services/article_docx.py` (стили заголовков → разделы) — тот же формат, что PDF (s021).
+- Вода (s023): `app/analysis/water.py` WaterJob — фоновый поток, lms CLI меняет модели (unload all → qwen3.6 → эмбеддер),
+  результаты в `para_claims` (sha1 текста); `article_report` подмешивает профили и считает новизну по содержательным абзацам.
+- Разметка (s023): `app/analysis/labels.py` (label_item/label), `static/label.html`, /api/label/*.
 
 ### app/analysis/lexical.py (session 014)
 - Шинглы по 5 «основ» (первые 6 букв), containment между абзацами (асимметричный) → почти
@@ -526,3 +529,4 @@ _Append only. Never delete entries._
 | 2026-10-17 | 016–017 | язык статьи, литература без номеров; `app/analysis/claims.py` (LLM-утверждения); docs/semantic_methods.md | статьи КИМ; «вода» не ловится эмбеддингами |
 | 2026-10-18 | 020 | Сервис статей: CorpusStore (SQLite), article_report, article_api, static/article.html; парсер — колонки и аннотация в конце | Переход от скриптов к сервису; ADR 005 |
 | 2026-10-18 | 021 | article_docx.py; страница сервиса переделана; оглавления/списки в парсере статей | Удобство для пользователя, курсовые/ВКР на входе |
+| 2026-10-18 | 023 | water.py (фоновая проверка воды), labels.py + label.html, document.journal | Вода в сервисе, калибровка разметкой |

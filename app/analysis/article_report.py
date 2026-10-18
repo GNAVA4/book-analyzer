@@ -21,6 +21,7 @@ import numpy as np
 from app.analysis.corpus import CorpusStore, doc_vectors
 from app.analysis.lexical import REUSE_THRESHOLD, body_units, find_reuse, self_citation_share
 from app.analysis.semantic import is_formula, make_chunks, redundant_pairs
+from app.analysis.water import eligible as water_eligible, lookup as water_lookup, text_hash
 
 # Порог «есть опора в корпусе» для фрагмента. Калибровка session 020 (scripts/corpus_calibrate.py,
 # 119 статей КиберЛенинки, 7 областей): лучшая близость фрагмента к статьям ЧУЖИХ областей —
@@ -126,6 +127,12 @@ def analyze_article(parsed: dict, store: CorpusStore, corpus: str, scope: str = 
         rec['verbatim'] = verbatim.get(p['i'], [])
         out_paras.append(rec)
 
+    # «вода»: профили утверждений уже проверенных абзацев (app/analysis/water.py)
+    prof = water_lookup(store.db, [p['text'] for p in out_paras])
+    for p in out_paras:
+        p['water_eligible'] = water_eligible(p['text'])
+        p['water'] = prof.get(text_hash(p['text'])) if p['water_eligible'] else None
+
     # --- разделы и статья ---
     def agg(ps: list) -> dict:
         scored = [p for p in ps if p['novelty'] is not None]
@@ -138,6 +145,21 @@ def analyze_article(parsed: dict, store: CorpusStore, corpus: str, scope: str = 
             'no_support': round(len([p for p in scored if not p['support']]) / len(scored), 3) if scored else None,
             'repeat_share': round(sum(p['chars'] for p in ps if p['repeats']) / chars, 3),
             'verbatim_share': round(sum(p['chars'] for p in ps if p['verbatim']) / chars, 3),
+            **water_agg(ps),
+        }
+
+    def water_agg(ps: list) -> dict:
+        elig = [p for p in ps if p['water_eligible']]
+        checked = [p for p in elig if p['water']]
+        cc = sum(p['chars'] for p in checked) or 1
+        # новизна по СОДЕРЖАТЕЛЬНЫМ абзацам: есть опора в корпусе и абзац не водянистый
+        # (session 019: вода на редкую тему выглядела «новой»)
+        subst = [p for p in checked if p['support'] and not p['water']['watery'] and p['novelty'] is not None]
+        return {
+            'water_eligible': len(elig), 'water_checked': len(checked),
+            'watery_share': round(sum(p['chars'] for p in checked if p['water']['watery']) / cc, 3) if checked else None,
+            'density': round(float(np.median([p['water']['density'] for p in checked])), 2) if checked else None,
+            'novelty_substantive': round(float(np.mean([p['novelty'] for p in subst])), 3) if subst else None,
         }
 
     sections = []

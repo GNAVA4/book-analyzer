@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS corpus (
 CREATE TABLE IF NOT EXISTS document (
   id INTEGER PRIMARY KEY, corpus_id INTEGER NOT NULL REFERENCES corpus(id) ON DELETE CASCADE,
   name TEXT NOT NULL, title TEXT, authors TEXT, year INTEGER, url TEXT,
-  area TEXT, area_source TEXT, area_conf REAL,
+  area TEXT, area_source TEXT, area_conf REAL, journal TEXT,
   n_chars INTEGER, lang TEXT, parsed TEXT, added REAL,
   UNIQUE(corpus_id, name));
 CREATE TABLE IF NOT EXISTS chunk (
@@ -66,10 +66,13 @@ def centroid(Mk: np.ndarray) -> np.ndarray:
 class CorpusStore:
     def __init__(self, path: str = DB_PATH, embedder: Embedder = None):
         os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
-        self.db = sqlite3.connect(path, check_same_thread=False)
+        self.path = path
+        self.db = sqlite3.connect(path, check_same_thread=False, timeout=30)
         self.db.row_factory = sqlite3.Row
         self.db.execute('PRAGMA foreign_keys = ON')
         self.db.executescript(_SCHEMA)
+        if 'journal' not in [r[1] for r in self.db.execute('PRAGMA table_info(document)')]:
+            self.db.execute('ALTER TABLE document ADD COLUMN journal TEXT')   # session 023
         self._emb = embedder
         self._cache = {}          # corpus_id → загруженный индекс
 
@@ -105,7 +108,7 @@ class CorpusStore:
 
     def documents(self, corpus: str) -> list:
         rows = self.db.execute(
-            'SELECT d.id, d.name, d.title, d.year, d.area, d.area_source, d.area_conf, d.n_chars, d.url '
+            'SELECT d.id, d.name, d.title, d.year, d.area, d.area_source, d.area_conf, d.journal, d.n_chars, d.url '
             'FROM document d JOIN corpus c ON c.id = d.corpus_id WHERE c.name=? ORDER BY d.area, d.title',
             (corpus,)).fetchall()
         return [dict(r) for r in rows]
@@ -126,10 +129,10 @@ class CorpusStore:
         self.db.execute('DELETE FROM document WHERE corpus_id=? AND name=?', (cid, name))
         cur = self.db.execute(
             'INSERT INTO document(corpus_id, name, title, authors, year, url, area, area_source, area_conf,'
-            ' n_chars, lang, parsed, added) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            ' journal, n_chars, lang, parsed, added) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
             (cid, name, meta.get('title') or parsed['meta'].get('title') or name,
              json.dumps(parsed['meta'].get('authors', []), ensure_ascii=False), meta.get('year'),
-             meta.get('url'), area, area_source, area_conf, n_chars, parsed.get('lang', 'ru'),
+             meta.get('url'), area, area_source, area_conf, meta.get('journal'), n_chars, parsed.get('lang', 'ru'),
              json.dumps(parsed, ensure_ascii=False), time.time()))
         doc_id = cur.lastrowid
         self.db.executemany(
@@ -159,7 +162,7 @@ class CorpusStore:
         if cid in self._cache:
             return self._cache[cid]
         docs = {r['id']: {**dict(r), 'chunks': [], 'vecs': []} for r in self.db.execute(
-            'SELECT id, name, title, year, url, area, area_source, parsed FROM document WHERE corpus_id=?',
+            'SELECT id, name, title, year, url, area, area_source, journal, parsed FROM document WHERE corpus_id=?',
             (cid,)).fetchall()}
         for r in self.db.execute(
                 'SELECT ch.doc_id, ch.idx, ch.section, ch.text, ch.formula, ch.emb FROM chunk ch '
