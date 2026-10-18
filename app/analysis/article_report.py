@@ -40,10 +40,10 @@ def _para_list(parsed: dict) -> list:
 
 
 def analyze_article(parsed: dict, store: CorpusStore, corpus: str, scope: str = 'topic',
-                    area: str = None, exclude: int = None, year: int = None, time_mode: str = 'before',
+                    area: str = None, exclude: int = None, year: int = None, time_mode: str = 'all',
                     include_undated: bool = True) -> dict:
     """year — год работы; time_mode='before' — сравнивать только с работами того же года и раньше
-    (по умолчанию [user, s025]), 'all' — со всеми. Документы без года — по include_undated."""
+    (опция), 'all' — со всеми (по умолчанию [user, s025]). Документы без года — по include_undated."""
     chunks = make_chunks(parsed)
     M = store.embedder.embed([c['text'] for c in chunks]) if chunks else np.zeros((0, 1024), np.float32)
     keep = [i for i, c in enumerate(chunks) if not c['formula']]

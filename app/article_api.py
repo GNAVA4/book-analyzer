@@ -78,7 +78,7 @@ def areas():
 @router.post('/article/analyze')
 def analyze_upload(file: UploadFile = File(...), corpus: str = Form(...), scope: str = Form('topic'),
                    area: str = Form(''), add: bool = Form(False), year: int = Form(None),
-                   time_mode: str = Form('before'), include_undated: bool = Form(True)):
+                   time_mode: str = Form('all'), include_undated: bool = Form(True)):
     ext = os.path.splitext(file.filename.lower())[1]
     if ext not in ('.pdf', '.docx'):
         raise HTTPException(422, 'Поддерживаются PDF и DOCX')
@@ -110,7 +110,7 @@ def analyze_upload(file: UploadFile = File(...), corpus: str = Form(...), scope:
 
 
 @router.get('/corpus-document/{doc_id}')
-def analyze_corpus_document(doc_id: int, corpus: str, scope: str = 'topic', time_mode: str = 'before',
+def analyze_corpus_document(doc_id: int, corpus: str, scope: str = 'topic', time_mode: str = 'all',
                             include_undated: bool = True):
     """Документ, уже лежащий в корпусе, — анализ относительно корпуса без него самого."""
     row = store().db.execute('SELECT name, parsed, area, area_source, year FROM document WHERE id=?',
