@@ -32,3 +32,13 @@ tests_v*/
 .claude/settings.json
 .claude/settings.local.json
 .claude/skills/
+# Статьи (локальные PDF) и результаты их разбора — этап 2
+articles/
+articles_parsed/
+
+articles_web/
+articles_web_parsed/
+.cache/
+data/
+articles_cl/
+articles_ai/

@@ -1,0 +1,631 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Анализ текста по корпусу</title>
+<style>
+:root{
+  --bg:#f5f6f8; --card:#ffffff; --ink:#1c1f24; --ink2:#4a5059; --muted:#7a818c; --line:#e4e7ec; --soft:#f0f2f5;
+  --accent:#2f5bd3; --accent-soft:#e8eefc;
+  --c-same:#d64545; --c-close:#e8952f; --c-topic:#4f7be8; --c-none:#c3c8d0;
+  --c-rep:#e8952f; --c-verb:#d64545; --c-water:#9b59b6; --c-dense:#2e9e6a;
+  --sel:#fff6d9; --shadow:0 1px 2px rgba(16,24,40,.06),0 1px 3px rgba(16,24,40,.08);
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#14161a; --card:#1d2025; --ink:#e8e9eb; --ink2:#b9bec6; --muted:#8a919b; --line:#2d3138; --soft:#24282e;
+  --accent:#7d9cf0; --accent-soft:#232c42; --c-none:#4a5059; --sel:#3a3520; --shadow:none;
+}}
+:root[data-theme="dark"]{
+  --bg:#14161a; --card:#1d2025; --ink:#e8e9eb; --ink2:#b9bec6; --muted:#8a919b; --line:#2d3138; --soft:#24282e;
+  --accent:#7d9cf0; --accent-soft:#232c42; --c-none:#4a5059; --sel:#3a3520; --shadow:none;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+button,select,input{font:inherit}
+a{color:var(--accent)}
+.wrap{max-width:1440px;margin:0 auto;padding:0 24px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow)}
+.muted{color:var(--muted)} .small{font-size:13px} .ink2{color:var(--ink2)}
+.btn{border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:8px;padding:9px 18px;cursor:pointer;font-weight:600}
+.btn:disabled{opacity:.45;cursor:default}
+.btn.ghost{background:transparent;color:var(--accent);font-weight:500}
+.btn.link{border:0;background:none;color:var(--accent);padding:0;font-weight:500;cursor:pointer}
+
+.top{background:var(--card);border-bottom:1px solid var(--line)}
+.top .wrap{display:flex;align-items:center;gap:16px;padding-top:14px;padding-bottom:14px}
+.top h1{font-size:18px;margin:0}
+.top p{margin:0;font-size:13px;color:var(--muted)}
+.top .grow{flex:1}
+
+.setup{margin:20px 0;padding:22px;display:grid;grid-template-columns:1fr 1fr;gap:28px}
+.step h2{font-size:15px;margin:0 0 4px;display:flex;align-items:center;gap:8px}
+.num{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:50%;background:var(--accent);color:#fff;font-size:12px;font-weight:700}
+.step .hint{font-size:13px;color:var(--muted);margin:0 0 12px}
+.field{margin-bottom:14px}
+.field>label{display:block;font-size:13px;font-weight:600;margin-bottom:6px}
+select{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.chip{font-size:12px;padding:2px 8px;border-radius:12px;background:var(--soft);color:var(--ink2);font-weight:400}
+.options{display:grid;gap:8px}
+.opt{display:flex;gap:10px;align-items:flex-start;border:1px solid var(--line);border-radius:10px;padding:10px 12px;cursor:pointer}
+.opt:has(input:checked){border-color:var(--accent);background:var(--accent-soft)}
+.opt input{margin-top:4px}
+.opt b{display:block;font-size:14px}
+.opt span{font-size:13px;color:var(--muted)}
+.drop{display:block;border:2px dashed var(--line);border-radius:12px;padding:26px 16px;text-align:center;cursor:pointer;transition:.15s}
+.drop:hover,.drop.over{border-color:var(--accent);background:var(--accent-soft)}
+.drop b{display:block;font-size:15px;margin-bottom:4px}
+.drop .file{margin-top:8px;font-weight:600;color:var(--accent)}
+.row{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:14px}
+.status{font-size:13px;color:var(--muted)} .status.err{color:var(--c-same)}
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;vertical-align:-2px;margin-right:6px}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+.intro{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:28px}
+.intro .card{padding:18px}
+.intro h3{margin:0 0 6px;font-size:15px}
+.intro p{margin:0;font-size:14px;color:var(--ink2)}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}
+
+.bar-setup{display:flex;align-items:center;gap:10px;margin:18px 0 10px;font-size:14px;color:var(--ink2);flex-wrap:wrap}
+.doc-head{padding:20px 22px;margin-bottom:16px}
+.doc-head h2{margin:0 0 4px;font-size:21px;line-height:1.3}
+.topic{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:12px;font-size:14px}
+.tag{font-size:13px;font-weight:600;padding:3px 10px;border-radius:12px;background:var(--accent-soft);color:var(--accent)}
+details.warn{margin-top:10px;font-size:13px;color:var(--ink2)}
+details.warn summary{cursor:pointer;color:var(--c-close)}
+.metrics{display:grid;grid-template-columns:2fr 1.3fr 1fr 1fr 1fr;gap:16px;margin-bottom:16px}
+.progress{height:8px;border-radius:4px;background:var(--soft);overflow:hidden;margin:8px 0 4px}.progress i{display:block;height:100%;background:var(--c-water)}
+.jobpill{display:none;align-items:center;gap:8px;font-size:13px;padding:6px 12px;border-radius:20px;background:color-mix(in srgb,var(--c-water) 14%,transparent);color:var(--ink2)}
+.jobpill.on{display:flex}
+.claim{font-size:13px;margin:4px 0;padding-left:8px;border-left:3px solid var(--line)}
+.claim b{font-size:11px;font-weight:600;padding:0 6px;border-radius:8px;margin-right:6px;background:var(--soft)}
+.lab em.water{background:color-mix(in srgb,var(--c-water) 16%,transparent);color:var(--c-water)}
+.metric{padding:16px 18px}
+.metric h3{margin:0;font-size:13px;font-weight:600;color:var(--ink2);display:flex;justify-content:space-between;gap:8px}
+.metric .big{font-size:30px;font-weight:700;margin:6px 0 2px;line-height:1.1}
+.metric p{margin:0;font-size:13px;color:var(--muted)}
+.qm{border:1px solid var(--line);background:var(--card);color:var(--muted);border-radius:50%;width:20px;height:20px;font-size:12px;cursor:pointer;flex:none;padding:0;line-height:1}
+.stack{display:flex;height:14px;border-radius:7px;overflow:hidden;margin:10px 0 8px;background:var(--soft)}
+.stack i{display:block;height:100%}
+.legend{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:13px;color:var(--ink2)}
+.legend span{white-space:nowrap}
+.legend .dot{width:9px;height:9px}
+
+.layout{display:grid;grid-template-columns:260px minmax(0,1fr) 360px;gap:16px;align-items:start;margin-bottom:40px}
+.side{position:sticky;top:12px;max-height:calc(100vh - 24px);overflow:auto;padding:16px}
+.side h4{margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+.toc a{display:block;text-decoration:none;color:var(--ink);font-size:13px;padding:5px 0 3px}
+.toc a:hover{color:var(--accent)}
+.toc .stack{height:5px;margin:3px 0 4px}
+.neigh{font-size:13px;margin:8px 0 10px}
+.neigh .stack{height:5px;margin:4px 0 2px}
+.neigh .stack i{background:var(--accent)}
+
+.doc{padding:0 26px 26px}
+.toolbar{position:sticky;top:0;z-index:3;background:var(--card);padding:14px 0 10px;border-bottom:1px solid var(--line);margin-bottom:6px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden;margin-bottom:8px;flex-wrap:wrap}
+.seg button{border:0;background:var(--card);color:var(--ink2);padding:6px 14px;cursor:pointer;font-size:13px;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button.on{background:var(--accent);color:#fff}
+.doc h3{font-size:16px;margin:26px 0 4px}
+.doc h3.l2{font-size:15px} .doc h3.l3{font-size:14px}
+.sec-meta{font-size:12px;color:var(--muted);margin-bottom:8px}
+.p{position:relative;padding:8px 12px 8px 16px;margin:6px 0;border-radius:8px;border-left:5px solid var(--c-none);cursor:pointer;white-space:pre-line}
+.p:hover{background:var(--soft)}
+.p.sel{background:var(--sel)}
+.p .lab{float:right;margin:0 0 4px 10px;display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;max-width:50%}
+.lab em{font-style:normal;font-size:11px;font-weight:600;padding:1px 7px;border-radius:9px;background:var(--soft);color:var(--ink2);white-space:nowrap}
+.lab em.rep{background:color-mix(in srgb,var(--c-rep) 18%,transparent);color:var(--c-rep)}
+.lab em.verb{background:color-mix(in srgb,var(--c-verb) 16%,transparent);color:var(--c-verb)}
+.p.abstract{border-left-color:var(--line);cursor:default}
+.p.formula{font-family:ui-monospace,monospace;font-size:12px;color:var(--muted)}
+
+.cardp{padding:18px}
+.cardp h4{margin:0 0 10px;font-size:13px;color:var(--muted);font-weight:600}
+.verdict{border-radius:10px;padding:12px 14px;margin-bottom:12px;font-size:14px}
+.verdict b{display:block;font-size:15px;margin-bottom:2px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:13px;margin:8px 0 14px}
+.kv dt{color:var(--muted)} .kv dd{margin:0}
+.quote{border-left:3px solid var(--accent);background:var(--soft);padding:8px 12px;border-radius:6px;font-size:13px;margin:6px 0 12px}
+.quote.click{cursor:pointer}
+.empty-card{color:var(--muted);font-size:14px}
+.empty-card ol{padding-left:18px;margin:8px 0 0}
+
+.overlay{position:fixed;inset:0;background:rgba(10,14,20,.45);display:none;z-index:20}
+.overlay.on{display:block}
+.drawer{position:fixed;top:0;right:0;bottom:0;width:min(620px,100%);background:var(--card);z-index:21;overflow:auto;padding:24px 28px;transform:translateX(100%);transition:transform .2s;visibility:hidden}
+.drawer.on{transform:none;visibility:visible}
+.drawer h2{margin:0 0 4px} .drawer h3{margin:22px 0 6px;font-size:16px}
+.drawer p,.drawer li{font-size:14px;color:var(--ink2)}
+.drawer .close{position:absolute;top:16px;right:18px}
+.modal{position:fixed;left:50%;top:6vh;transform:translateX(-50%);width:min(760px,94vw);max-height:86vh;display:none;flex-direction:column;z-index:21;padding:20px}
+.modal.on{display:flex}
+.modal input{width:100%;padding:9px 12px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);margin:10px 0}
+.modal .list{overflow:auto}
+.modal .list h5{margin:14px 0 4px;font-size:12px;text-transform:uppercase;color:var(--muted);letter-spacing:.05em}
+.modal .item{padding:7px 8px;border-radius:6px;cursor:pointer;font-size:14px}
+.modal .item:hover{background:var(--accent-soft)}
+
+@media (max-width:1200px){.layout{grid-template-columns:220px minmax(0,1fr)}.layout .detail{grid-column:1/-1;position:static;max-height:none}}
+@media (max-width:900px){.setup,.intro{grid-template-columns:1fr}.metrics{grid-template-columns:1fr 1fr}.layout{grid-template-columns:1fr}.side{position:static;max-height:none}}
+@media (max-width:600px){.wrap{padding:0 16px}.metrics{grid-template-columns:1fr}.doc{padding:0 14px 20px}.top .wrap{flex-wrap:wrap}}
+</style>
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <div class="grow"><h1>Анализ текста по корпусу</h1>
+    <p>Сравнивает работу со статьями той же темы и показывает по каждому абзацу, что в нём уже где-то написано</p></div>
+  <div class="jobpill" id="jobpill"><span class="spinner"></span><span id="jobtext"></span><button class="btn link" onclick="stopWater()">остановить</button></div>
+  <a class="btn ghost" href="/label.html" style="text-decoration:none">Разметка</a>
+  <button class="btn ghost" onclick="openHelp()">Как читать результаты</button>
+</div></header>
+
+<main class="wrap">
+  <section class="card setup" id="setup">
+    <div class="step">
+      <h2><span class="num">1</span>С чем сравнивать</h2>
+      <p class="hint">Корпус — набор статей, с которыми сравнивается работа. Выбирайте корпус, близкий по теме.</p>
+      <div class="field"><label for="corpus">Корпус</label><select id="corpus"></select>
+        <div class="small muted" id="corpusInfo" style="margin-top:6px"></div><div class="chips" id="corpusAreas"></div></div>
+      <div class="field"><label>Какие статьи корпуса брать</label>
+        <div class="options">
+          <label class="opt"><input type="radio" name="scope" value="topic" checked><div><b>Статьи той же темы <span class="chip">рекомендуется</span></b>
+            <span>Тема работы определяется автоматически; из статей этой темы берутся 10 самых близких по смыслу.</span></div></label>
+          <label class="opt"><input type="radio" name="scope" value="nearest"><div><b>Самые близкие статьи</b>
+            <span>10 ближайших по смыслу статей без учёта темы — для междисциплинарных работ.</span></div></label>
+          <label class="opt"><input type="radio" name="scope" value="corpus"><div><b>Весь корпус</b>
+            <span>Все статьи сразу. Имеет смысл, если корпус маленький и целиком по теме.</span></div></label>
+        </div></div>
+      <div class="field"><label for="area">Тема работы</label><select id="area"><option value="">Определить автоматически</option></select></div>
+      <div class="field"><label>С какими работами по времени</label>
+        <div class="options">
+          <label class="opt"><input type="radio" name="time" value="before"><div><b>Вышедшими не позже работы</b>
+            <span>Свежая работа сравнивается с тем, что было написано до неё (того же года и раньше): более поздние работы могли пересказать её саму.</span></div></label>
+          <label class="opt"><input type="radio" name="time" value="all" checked><div><b>Со всеми <span class="chip">по умолчанию</span></b>
+            <span>Год не учитывается.</span></div></label>
+        </div>
+        <label class="small ink2" style="display:flex;gap:8px;margin-top:8px"><input type="checkbox" id="undated" checked>
+          Учитывать документы без известного года (часть статей и студенческие работы)</label></div>
+    </div>
+    <div class="step">
+      <h2><span class="num">2</span>Что проверяем</h2>
+      <p class="hint">Статья, курсовая, отчёт или ВКР на русском языке. Сканы без текстового слоя пока не поддерживаются.</p>
+      <label class="drop" id="drop"><input type="file" id="file" accept=".pdf,.docx" hidden>
+        <b>Перетащите файл сюда или нажмите, чтобы выбрать</b><span class="small muted">PDF или DOCX</span>
+        <div class="file" id="fileName"></div></label>
+      <label class="small ink2" style="display:flex;gap:8px;align-items:center;margin-top:12px">Год работы
+        <input type="number" id="year" min="1950" max="2100" style="width:90px;padding:5px 8px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--ink)">
+        <span class="muted">— по умолчанию текущий</span></label>
+      <label class="small ink2" style="display:flex;gap:8px;margin-top:12px"><input type="checkbox" id="add">
+        Сохранить работу в выбранный корпус после проверки (с ней будут сравниваться следующие)</label>
+      <div class="row"><button class="btn" id="go" disabled>Проверить</button><span class="status" id="status"></span></div>
+      <div class="row small"><span class="muted">или</span><button class="btn link" onclick="openPicker()">открыть документ, который уже есть в корпусе</button></div>
+    </div>
+  </section>
+
+  <section class="intro" id="intro">
+    <div class="card"><h3><span class="dot" style="background:var(--c-topic)"></span>Похоже ли на уже написанное</h3>
+      <p>Для каждого абзаца находим самое похожее по смыслу место в статьях корпуса и показываем его рядом, чтобы вы могли сравнить сами.</p></div>
+    <div class="card"><h3><span class="dot" style="background:var(--c-rep)"></span>Повторяется ли автор</h3>
+      <p>Абзацы, которые пересказывают другие абзацы этой же работы, — частый признак «воды» и затянутости.</p></div>
+    <div class="card"><h3><span class="dot" style="background:var(--c-verb)"></span>Есть ли дословные совпадения</h3>
+      <p>Куски текста, совпадающие почти слово в слово с корпусом или с другим местом работы.</p></div>
+    <div class="card"><h3><span class="dot" style="background:var(--c-water)"></span>Много ли «воды»</h3>
+      <p>Языковая модель разбирает каждый абзац на утверждения и смотрит, сколько из них — конкретика, а сколько — общие слова.</p></div>
+  </section>
+
+  <section id="result" hidden>
+    <div class="bar-setup" id="setupBar"></div>
+    <div class="card doc-head" id="docHead"></div>
+    <div class="metrics" id="metrics"></div>
+    <div class="layout">
+      <aside class="card side" id="side"></aside>
+      <article class="card doc" id="doc"></article>
+      <aside class="card side cardp detail" id="detail"></aside>
+    </div>
+  </section>
+</main>
+
+<div class="overlay" id="overlay" onclick="closeAll()"></div>
+<div class="drawer" id="help">
+  <button class="btn ghost close" onclick="closeAll()">Закрыть</button>
+  <h2>Как читать результаты</h2>
+  <p class="muted">Все оценки считаются автоматически и служат подсказкой, где посмотреть внимательнее. Это не вердикт о качестве работы.</p>
+  <h3>Как это работает</h3>
+  <ol>
+    <li>Работа разбивается на разделы и абзацы. Оглавление, подписи к рисункам, формулы и список литературы в сравнение не входят.</li>
+    <li>Определяется тема (область наук) — по самым похожим статьям с известной темой.</li>
+    <li>Из корпуса выбираются 10 статей, наиболее близких к работе по смыслу.</li>
+    <li>Каждый абзац сравнивается с каждым фрагментом этих статей по смыслу: языковая модель переводит текст в набор чисел, и близкие по смыслу тексты получают близкие наборы.</li>
+  </ol>
+  <h3 id="h-sim">Похожесть на корпус</h3>
+  <p>Число от 0 до 1 — насколько абзац близок по смыслу к самому похожему фрагменту корпуса. Совпадение слов не требуется: пересказ своими словами тоже считается похожим.</p>
+  <ul>
+    <li><span class="dot" style="background:var(--c-same)"></span><b>Почти то же самое</b> (0,85 и выше) — та же мысль, часто пересказ.</li>
+    <li><span class="dot" style="background:var(--c-close)"></span><b>Близко по смыслу</b> (0,75–0,85) — о том же, похожими словами.</li>
+    <li><span class="dot" style="background:var(--c-topic)"></span><b>Та же тема</b> (<span class="thr">0,56</span>–0,75) — в корпусе есть текст на эту тему, но мысль другая.</li>
+    <li><span class="dot" style="background:var(--c-none)"></span><b>Не с чем сравнить</b> (ниже <span class="thr">0,56</span>) — в корпусе нет ничего близкого. Это <i>не</i> значит, что абзац новый: возможно, в корпусе просто нет статей на эту тему. Граница выбрана так: настолько же близки бывают тексты из совсем разных областей наук.</li>
+  </ul>
+  <h3 id="h-nov">Новизна</h3>
+  <p>1 минус похожесть, в среднем по абзацам, у которых есть с чем сравнить. 0 — всё уже есть в корпусе; чем больше — тем дальше работа от написанного. Абзацы «не с чем сравнить» сюда не входят, иначе работа на редкую тему выглядела бы «новой» просто потому, что корпус пуст.</p>
+  <h3 id="h-rep">Повторы внутри работы</h3>
+  <p>Доля текста в абзацах, у которых есть смысловой двойник в другом месте этой же работы (не соседний абзац, похожесть 0,82 и выше). С аннотацией не сравниваем — она обязана пересказывать работу.</p>
+  <h3 id="h-verb">Дословные совпадения</h3>
+  <p>Доля текста в абзацах, где не меньше 30% цепочек из пяти слов подряд совпадает с абзацем статьи корпуса или с другим абзацем этой работы. Окончания слов не учитываются, поэтому смена падежа совпадение не скрывает.</p>
+  <h3 id="h-water">Вода</h3>
+  <p>Большая языковая модель (Qwen) разбирает абзац на отдельные утверждения и помечает каждое:</p>
+  <ul>
+    <li><b>результат</b> — что получили сами авторы (доказали, измерили, предложили);</li>
+    <li><b>факт</b> — конкретное проверяемое знание: определение, метод, чужой результат;</li>
+    <li><b>общее</b> — слова без конкретики: «актуально», «позволяет повысить эффективность»;</li>
+    <li><b>связка</b> — анонсы и пересказ плана: «в статье рассмотрено», «далее описано».</li>
+  </ul>
+  <p>Абзац считается <b>водянистым</b>, если общих слов и связок — половина утверждений или больше. <b>Плотность</b> — число результатов и фактов на 1000 знаков (у обычных научных абзацев около 8–12, у «воды» 1–3).</p>
+  <p>Проверка медленная — около 6 секунд на абзац, поэтому запускается кнопкой. Абзацы короче 200 знаков и формулы не проверяются. Проверенные абзацы запоминаются: повторно их проверять не нужно.</p>
+  <p>Когда вода проверена, <b>новизна</b> считается только по содержательным абзацам — иначе водянистый абзац на редкую тему выглядел бы «новым».</p>
+  <h3 id="h-self">Самоцитирование</h3>
+  <p>Доля пунктов списка литературы, среди авторов которых есть автор работы.</p>
+  <h3>Тема и уверенность</h3>
+  <p>Тема — голосование 7 самых похожих статей с известной темой. Уверенность — доля голосов за победившую тему. Если тема определена неверно, выберите её вручную в шаге 1.</p>
+  <h3>Ограничения</h3>
+  <ul>
+    <li>Результат зависит от корпуса: чем плотнее корпус по теме работы, тем осмысленнее оценки.</li>
+    <li>Смысловая модель плохо отличает «ту же мысль» от «той же узкой темы» — поэтому похожие места показываются целиком, решает человек.</li>
+    <li>Только русский язык. Формулы и таблицы не анализируются.</li>
+  </ul>
+</div>
+<div class="card modal" id="picker">
+  <div style="display:flex;justify-content:space-between;align-items:center"><b>Документы корпуса <span id="pickerCorpus" class="muted"></span></b>
+    <button class="btn ghost" onclick="closeAll()">Закрыть</button></div>
+  <div class="small muted">Документ будет сравнён с остальным корпусом (без него самого).</div>
+  <input id="search" placeholder="Поиск по названию…">
+  <div class="list" id="pickerList"></div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const pct = x => x == null ? '—' : Math.round(x * 100) + '%';
+const num = (x, d = 2) => x == null ? '—' : x.toFixed(d).replace('.', ',');
+let R = null, mode = 'sim', corpora = [], docs = [], file = null;
+
+async function api(url, opts) {
+  const r = await fetch(url, opts);
+  if (!r.ok) { let d; try { d = (await r.json()).detail } catch { d = r.statusText } throw new Error(d) }
+  return r.json();
+}
+const scope = () => document.querySelector('input[name=scope]:checked').value;
+const timeMode = () => document.querySelector('input[name=time]:checked').value;
+$('year').value = new Date().getFullYear();
+const timeQS = () => `&time_mode=${timeMode()}&include_undated=${$('undated').checked}`;
+const SCOPE_TEXT = {topic: 'статьи той же темы', nearest: 'самые близкие статьи', corpus: 'весь корпус'};
+
+// ---------- категории похожести ----------
+const CATS = [
+  {k: 'same', name: 'почти то же самое', color: 'var(--c-same)', test: s => s >= .85},
+  {k: 'close', name: 'близко по смыслу', color: 'var(--c-close)', test: s => s >= .75},
+  {k: 'topic', name: 'та же тема', color: 'var(--c-topic)', test: s => s >= R.thresholds.support_sim},
+  {k: 'none', name: 'не с чем сравнить', color: 'var(--c-none)', test: () => true},
+];
+const cat = p => p.sim == null ? null : CATS.find(c => c.test(p.sim));
+function dist(ps) {        // доли ТЕКСТА (по знакам) по категориям
+  const scored = ps.filter(p => p.sim != null), out = {};
+  CATS.forEach(c => out[c.k] = 0);
+  scored.forEach(p => out[cat(p).k] += p.chars);
+  const tot = scored.reduce((a, p) => a + p.chars, 0) || 1;
+  CATS.forEach(c => out[c.k] /= tot);
+  return out;
+}
+const stack = d => '<div class="stack">' + CATS.map(c => d[c.k] ? `<i style="width:${d[c.k] * 100}%;background:${c.color}" title="${c.name}: ${pct(d[c.k])}"></i>` : '').join('') + '</div>';
+
+// ---------- шаг 1: корпус ----------
+async function loadCorpora() {
+  corpora = await api('/api/corpora');
+  const keep = $('corpus').value;
+  $('corpus').innerHTML = corpora.map(c => `<option value="${esc(c.name)}">${esc(c.name)}</option>`).join('');
+  if (keep) $('corpus').value = keep;
+  const areas = await api('/api/areas');
+  $('area').innerHTML = '<option value="">Определить автоматически</option>' + areas.map(a => `<option>${esc(a)}</option>`).join('');
+  showCorpus();
+}
+function showCorpus() {
+  const c = corpora.find(c => c.name === $('corpus').value); if (!c) return;
+  $('corpusInfo').textContent = `${c.documents} документов${c.description ? ' · ' + c.description : ''}`;
+  const by = {};
+  c.areas.forEach(a => by[a.area || 'без темы'] = (by[a.area || 'без темы'] || 0) + a.n);
+  $('corpusAreas').innerHTML = Object.entries(by).sort((a, b) => b[1] - a[1]).map(([a, n]) => `<span class="chip">${esc(a)} · ${n}</span>`).join('');
+}
+$('corpus').onchange = showCorpus;
+
+// ---------- шаг 2: файл ----------
+function setFile(f) {
+  if (!f) return;
+  if (!/\.(pdf|docx)$/i.test(f.name)) { status('Нужен файл PDF или DOCX', true); return }
+  file = f; $('fileName').textContent = f.name; $('go').disabled = false; status('');
+}
+$('file').onchange = e => setFile(e.target.files[0]);
+const drop = $('drop');
+['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over') }));
+['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over') }));
+drop.addEventListener('drop', e => setFile(e.dataTransfer.files[0]));
+function status(t, err = false, busy = false) {
+  $('status').innerHTML = (busy ? '<span class="spinner"></span>' : '') + esc(t);
+  $('status').className = 'status' + (err ? ' err' : '');
+}
+
+$('go').onclick = async () => {
+  const fd = new FormData();
+  fd.append('file', file); fd.append('corpus', $('corpus').value); fd.append('scope', scope());
+  fd.append('area', $('area').value); fd.append('add', $('add').checked);
+  fd.append('year', $('year').value || new Date().getFullYear()); fd.append('time_mode', timeMode());
+  fd.append('include_undated', $('undated').checked);
+  await run(() => api('/api/article/analyze', {method: 'POST', body: fd}), 'Разбираем документ и ищем похожие места… обычно 5–30 секунд');
+  if ($('add').checked) loadCorpora();
+};
+async function openDoc(id) {
+  closeAll();
+  await run(() => api(`/api/corpus-document/${id}?corpus=${encodeURIComponent($('corpus').value)}&scope=${scope()}${timeQS()}`), 'Ищем похожие места…');
+}
+async function run(fn, msg) {
+  $('go').disabled = true; status(msg, false, true);
+  try {
+    R = await fn(); status('');
+    waterPending = null;
+    render(); refreshPending().catch(() => {});
+    $('setup').hidden = true; $('intro').hidden = true; $('result').hidden = false;
+    window.scrollTo({top: 0});
+  } catch (e) { status(e.message, true); $('setup').hidden = false }
+  $('go').disabled = !file;
+}
+function editSetup() { $('setup').hidden = false; $('result').hidden = true; window.scrollTo({top: 0}) }
+
+// ---------- результат ----------
+function render() {
+  const m = R.meta, s = R.summary, a = R.area;
+  document.querySelectorAll('.thr').forEach(e => e.textContent = num(R.thresholds.support_sim));
+  const T = R.time || {};
+  const timeTxt = T.mode === 'before'
+    ? `работы ${T.year} г. и раньше${T.excluded_later ? ` (более поздних отсечено: ${T.excluded_later})` : ''}${T.include_undated ? '' : ', без документов без года'}`
+    : (T.year ? 'все работы, без учёта года' : 'все работы (год этой работы неизвестен)');
+  $('setupBar').innerHTML = `<span>Корпус <b>«${esc(R.corpus)}»</b> · ${SCOPE_TEXT[R.scope]} · ${timeTxt} · ${R.neighbours.length} статей для сравнения</span>
+    <button class="btn ghost" onclick="editSetup()">Изменить настройки или проверить другой файл</button>`;
+
+  const votes = Object.entries(a.votes || {}).map(([k, v]) => `${esc(k)} ${pct(v)}`).join(', ');
+  $('docHead').innerHTML = `<h2>${esc(m.title || R.file)}</h2>
+    <div class="muted small">${esc(m.authors.join(', '))}${m.authors.length ? ' · ' : ''}${esc(R.file || '')} · ${s.paragraphs} абзацев, ${Math.round(s.chars / 1000)} тыс. знаков</div>
+    <div class="topic">Тема: <span class="tag">${esc(a.area || 'не определена')}</span>
+      <span class="muted">${a.source === 'авто' ? `определена автоматически, уверенность ${pct(a.confidence)}${votes ? ' (голоса: ' + votes + ')' : ''}` : 'указана вручную'}</span></div>
+    ${m.warnings.length ? `<details class="warn"><summary>Замечания при разборе файла (${m.warnings.length})</summary><ul>${m.warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul></details>` : ''}`;
+
+  renderMetrics();
+
+  let side = '<h4>Структура работы</h4><div class="toc">';
+  R.sections.forEach(sec => {
+    const ps = R.paragraphs.filter(p => p.section === sec.i);
+    side += `<a href="#sec${sec.i}" style="padding-left:${(sec.level - 1) * 12}px">${esc(sec.title)}</a>${ps.some(p => p.sim != null) ? stack(dist(ps)) : ''}`;
+  });
+  side += '</div><h4 style="margin-top:18px">С чем сравнивали</h4><div class="small muted">Полоса — какая доля содержания работы есть в этой статье.</div>';
+  R.neighbours.forEach(n => side += `<div class="neigh">${n.url ? `<a href="${esc(n.url)}" target="_blank">${esc(n.title)}</a>` : esc(n.title)}
+    <div class="muted">${n.year || ''} ${esc(n.area || '')}</div><div class="stack"><i style="width:${Math.round(n.coverage * 100)}%"></i></div></div>`);
+  $('side').innerHTML = side;
+  renderDoc();
+  $('detail').innerHTML = `<div class="empty-card"><b>Подробности по абзацу</b><ol>
+    <li>Выберите подсветку над текстом.</li><li>Щёлкните по любому абзацу.</li>
+    <li>Здесь появится самое похожее место в корпусе, повторы и совпадения.</li></ol></div>`;
+}
+
+// ---------- вода ----------
+function waterSum(ps) {
+  const elig = ps.filter(p => p.water_eligible), checked = elig.filter(p => p.water);
+  const cc = checked.reduce((a, p) => a + p.chars, 0) || 1;
+  const subst = checked.filter(p => p.support && !p.water.watery && p.novelty != null);
+  const dens = checked.map(p => p.water.density).sort((a, b) => a - b);
+  return {elig: elig.length, checked: checked.length,
+    watery: checked.length ? checked.filter(p => p.water.watery).reduce((a, p) => a + p.chars, 0) / cc : null,
+    density: dens.length ? dens[Math.floor(dens.length / 2)] : null,
+    novelty: subst.length ? subst.reduce((a, p) => a + p.novelty, 0) / subst.length : null};
+}
+let waterPending = null, job = {running: false};
+const postJSON = (url, body) => api(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+async function refreshPending() {
+  const r = await postJSON('/api/water/pending', {texts: R.paragraphs.map(p => p.text)});
+  waterPending = r.pending; renderMetrics();
+}
+async function startWater() {
+  const r = await postJSON('/api/water/start', {texts: R.paragraphs.map(p => p.text), label: R.meta.title || R.file});
+  if (!r.ok) alert(r.reason);
+  job = r.state; renderMetrics(); pollWater();
+}
+async function stopWater() { job = await api('/api/water/stop', {method: 'POST'}); showJob() }
+const hrs = sec => sec > 5400 ? `~${Math.round(sec / 3600)} ч` : `~${Math.max(1, Math.round(sec / 60))} мин`;
+function showJob() {
+  const on = job.running;
+  $('jobpill').classList.toggle('on', !!on);
+  if (on) {
+    const left = (job.total - job.done) * (job.sec_per_para || 6);
+    const ph = {queued: 'в очереди', loading: 'загружаю модель', restoring: 'возвращаю эмбеддер'}[job.phase];
+    $('jobtext').textContent = `Вода: ${job.done} из ${job.total} абзацев · ${ph || 'осталось ' + hrs(left)} (${(job.label || '').slice(0, 40)})`;
+  }
+}
+let pollTimer = null, wasRunning = false;
+async function pollWater() {
+  clearTimeout(pollTimer);
+  try { job = await api('/api/water/status') } catch { pollTimer = setTimeout(pollWater, 15000); return }
+  showJob();
+  if (R && (job.running || wasRunning)) {
+    const todo = R.paragraphs.filter(p => p.water_eligible && !p.water);
+    const prof = await postJSON('/api/water/profiles', {texts: todo.map(p => p.text)});
+    let changed = false;
+    for (const p of todo) {
+      const h = await sha1(p.text);
+      if (prof[h]) { p.water = prof[h]; changed = true }
+    }
+    if (changed || wasRunning !== job.running) { await refreshPending(); renderDoc() }
+    else renderMetrics();
+  }
+  wasRunning = job.running;
+  pollTimer = setTimeout(pollWater, job.running ? 4000 : 15000);
+}
+async function sha1(t) {
+  const b = await crypto.subtle.digest('SHA-1', new TextEncoder().encode(t));
+  return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join('');
+}
+
+function renderMetrics() {
+  if (!R) return;
+  const m = R.meta, s = R.summary, d = dist(R.paragraphs), w = waterSum(R.paragraphs);
+  const todo = waterPending ?? (w.elig - w.checked);
+  let wcard;
+  if (job.running) wcard = `<div class="progress"><i style="width:${job.total ? job.done / job.total * 100 : 0}%"></i></div>
+      <p>идёт проверка: ${job.done} из ${job.total} абзацев (${esc((job.label || '').slice(0, 50))})</p>
+      <button class="btn ghost" style="margin-top:8px" onclick="stopWater()">Остановить</button>`;
+  else if (w.checked) wcard = `<div class="big">${pct(w.watery)}</div><p>текста — водянистые абзацы · плотность ${num(w.density, 1)} утв. на 1000 знаков
+      · проверено ${w.checked} из ${w.elig} абзацев</p>
+      ${todo ? `<button class="btn ghost" style="margin-top:8px" onclick="startWater()">Проверить остальные ${todo} (${hrs(todo * 6)})</button>` : ''}`;
+  else wcard = `<p style="margin:8px 0">Ещё не проверено. Языковая модель разберёт ${todo} абзацев на утверждения —
+      это займёт ${hrs(todo * 6)}. Пока идёт проверка, новые файлы загружать нельзя.</p>
+      <button class="btn" onclick="startWater()">Проверить на воду</button>`;
+  const novTxt = w.novelty != null
+    ? `Новизна по содержательным абзацам (есть опора в корпусе, не вода): <b>${num(w.novelty)}</b>`
+    : `Новизна там, где есть с чем сравнить: <b>${num(s.novelty)}</b>`;
+  $('metrics').innerHTML = `
+    <div class="card metric"><h3>Похожесть на корпус <button class="qm" title="Что это значит" onclick="openHelp('h-sim')">?</button></h3>
+      ${stack(d)}
+      <div class="legend">${CATS.map(c => `<span><i class="dot" style="background:${c.color}"></i>${c.name} — <b>${pct(d[c.k])}</b></span>`).join('')}</div>
+      <p style="margin-top:8px">Доля текста по похожести на самое близкое место в статьях корпуса.
+        ${novTxt} <button class="qm" title="Что это значит" onclick="openHelp('h-nov')">?</button></p></div>
+    <div class="card metric"><h3>Вода <button class="qm" title="Что это значит" onclick="openHelp('h-water')">?</button></h3>${wcard}</div>
+    <div class="card metric"><h3>Повторы внутри работы <button class="qm" title="Что это значит" onclick="openHelp('h-rep')">?</button></h3>
+      <div class="big">${pct(s.repeat_share)}</div><p>текста пересказывает другие места этой же работы</p></div>
+    <div class="card metric"><h3>Дословные совпадения <button class="qm" title="Что это значит" onclick="openHelp('h-verb')">?</button></h3>
+      <div class="big">${pct(s.verbatim_share)}</div><p>текста почти слово в слово совпадает с корпусом или с другим местом работы</p></div>
+    <div class="card metric"><h3>Самоцитирование <button class="qm" title="Что это значит" onclick="openHelp('h-self')">?</button></h3>
+      <div class="big">${m.references ? pct(s.self_citation) : '—'}</div><p>${m.references ? `источников из ${m.references} — работы самого автора` : 'список литературы не найден'}</p></div>`;
+}
+
+const MODES = {
+  sim: {name: 'Похожесть на корпус', legend: () => CATS.map(c => [c.color, c.name])},
+  rep: {name: 'Повторы внутри работы', legend: () => [['var(--c-rep)', 'пересказывает другое место работы'], ['var(--c-verb)', 'дословно повторяет другое место'], ['var(--c-none)', 'нет повторов']]},
+  verb: {name: 'Дословно из корпуса', legend: () => [['var(--c-verb)', 'совпадает со статьёй корпуса'], ['var(--c-none)', 'нет совпадений']]},
+  water: {name: 'Вода', legend: () => [['var(--c-water)', 'водянистый абзац'], ['var(--c-dense)', 'по делу'], ['var(--c-none)', 'не проверен'], ['var(--line)', 'короткий — не проверяется']]},
+};
+function color(p) {
+  if (mode === 'sim') return p.sim == null ? 'var(--line)' : cat(p).color;
+  if (mode === 'rep') return p.verbatim.some(v => !v.doc_id) ? 'var(--c-verb)' : p.repeats.length ? 'var(--c-rep)' : 'var(--c-none)';
+  if (mode === 'water') return !p.water_eligible ? 'var(--line)' : !p.water ? 'var(--c-none)' : p.water.watery ? 'var(--c-water)' : 'var(--c-dense)';
+  return p.verbatim.some(v => v.doc_id) ? 'var(--c-verb)' : 'var(--c-none)';
+}
+function label(p) {
+  const out = [];
+  if (mode === 'sim' && p.sim != null) out.push(`<em>${cat(p).name} · ${num(p.sim)}</em>`);
+  if (p.sim == null) out.push(`<em>не оценён: ${esc(p.skip)}</em>`);
+  if (p.repeats.length) out.push('<em class="rep">повтор</em>');
+  if (p.verbatim.length) out.push('<em class="verb">дословно</em>');
+  if (mode === 'water' && p.water) out.push(`<em>плотность ${num(p.water.density, 1)} · общих ${pct(p.water.general_share)}</em>`);
+  if (p.water && p.water.watery) out.push('<em class="water">вода</em>');
+  return out.join('');
+}
+function renderDoc() {
+  let h = `<div class="toolbar"><div class="seg">${Object.entries(MODES).map(([k, v]) => `<button class="${k === mode ? 'on' : ''}" data-m="${k}">${v.name}</button>`).join('')}</div>
+    <div class="legend">${MODES[mode].legend().map(([c, t]) => `<span><i class="dot" style="background:${c}"></i>${t}</span>`).join('')}</div></div>`;
+  if (R.meta.abstract) h += `<h3>Аннотация</h3><div class="sec-meta">не сравнивается — по определению пересказывает работу</div><div class="p abstract">${esc(R.meta.abstract)}</div>`;
+  R.sections.forEach(sec => {
+    const ps = R.paragraphs.filter(p => p.section === sec.i);
+    h += `<h3 id="sec${sec.i}" class="l${sec.level}">${esc(sec.title)}</h3>`;
+    if (ps.length) h += `<div class="sec-meta">${ps.length} абз. · повторы ${pct(sec.repeat_share)} · дословно ${pct(sec.verbatim_share)}${sec.novelty != null ? ' · новизна ' + num(sec.novelty) : ''}</div>`;
+    ps.forEach(p => h += `<div class="p ${p.formula ? 'formula' : ''}" id="p${p.i}" data-i="${p.i}" style="border-left-color:${color(p)}"><span class="lab">${label(p)}</span>${esc(p.text)}</div>`);
+  });
+  $('doc').innerHTML = h;
+  $('doc').querySelectorAll('[data-m]').forEach(b => b.onclick = () => { mode = b.dataset.m; renderDoc() });
+  $('doc').querySelectorAll('.p[data-i]').forEach(el => el.onclick = () => showCard(+el.dataset.i));
+}
+
+function verdict(p) {
+  if (p.sim == null) return {c: 'var(--c-none)', t: 'Абзац не оценён', d: p.skip === 'формулы' ? 'В основном формулы — их смысл модель не понимает.' : 'Слишком короткий для сравнения по смыслу.'};
+  const c = cat(p);
+  const D = {
+    same: 'В корпусе есть почти та же мысль — сравните с цитатой ниже: это может быть пересказ.',
+    close: 'В корпусе есть текст о том же самом, похожими словами.',
+    topic: 'В корпусе есть текст на эту тему, но мысль другая.',
+    none: 'В корпусе нет ничего близкого. Это не означает новизну: возможно, в корпусе просто нет статей об этом.',
+  };
+  return {c: c.color, t: c.name[0].toUpperCase() + c.name.slice(1), d: D[c.k]};
+}
+function showCard(i) {
+  document.querySelectorAll('.p.sel').forEach(e => e.classList.remove('sel'));
+  $('p' + i).classList.add('sel');
+  const p = R.paragraphs[i], sec = R.sections[p.section], v = verdict(p);
+  let h = `<h4>Абзац ${i + 1} · ${esc(sec.title)}</h4>
+    <div class="verdict" style="background:color-mix(in srgb,${v.c} 14%,transparent);border-left:4px solid ${v.c}"><b>${v.t}</b>${v.d}</div>
+    <dl class="kv"><dt>Похожесть</dt><dd>${p.sim == null ? '—' : num(p.sim, 3) + ' из 1'}</dd>
+      <dt>Новизна</dt><dd>${p.sim == null || !p.support ? '— (не с чем сравнить)' : num(p.novelty)}</dd>
+      <dt>Длина</dt><dd>${p.chars} знаков${p.shared_chunk ? ' · оценён вместе с соседними короткими абзацами' : ''}</dd></dl>`;
+  if (p.nearest) {
+    const n = p.nearest;
+    h += `<h4>Самое похожее место в корпусе</h4><div class="small">${n.url ? `<a href="${esc(n.url)}" target="_blank">${esc(n.title)}</a>` : esc(n.title)}
+      <span class="muted"> · ${n.year || ''} · раздел «${esc(n.section)}»</span></div><div class="quote">${esc(n.text)}…</div>`;
+  }
+  if (p.repeats.length) {
+    h += `<h4>Пересказывает другие места работы</h4>`;
+    p.repeats.forEach(r => h += `<div class="quote click" onclick="jump(${r.para})"><b>Абзац ${r.para + 1}</b> · похожесть ${num(r.sim)}<br>${esc(R.paragraphs[r.para].text.slice(0, 240))}…</div>`);
+  }
+  if (p.verbatim.length) {
+    h += `<h4>Дословные совпадения</h4>`;
+    p.verbatim.forEach(v => h += v.doc_id
+      ? `<div class="quote" style="border-color:var(--c-verb)"><b>${esc(v.where)}</b> · совпадает ${pct(v.share)} абзаца<br>${esc(v.text)}…</div>`
+      : `<div class="quote click" style="border-color:var(--c-verb)" onclick="jump(${v.para})"><b>Абзац ${v.para + 1} этой работы</b> · совпадает ${pct(v.share)} абзаца</div>`);
+  }
+  if (!p.repeats.length && !p.verbatim.length && p.sim != null) h += '<p class="muted small">Повторов внутри работы и дословных совпадений нет.</p>';
+  if (p.water) {
+    const w = p.water, T = {'результат': 'var(--c-dense)', 'факт': 'var(--c-topic)', 'общее': 'var(--c-water)', 'связка': 'var(--c-none)'};
+    h += `<h4>Вода: ${w.watery ? 'да' : 'нет'}</h4><div class="small ink2">Утверждений ${w.claims}: содержательных ${w.substantive}, общих слов и связок ${w.general}. Плотность ${num(w.density, 1)} на 1000 знаков.</div>`;
+    w.items.forEach(c => h += `<div class="claim" style="border-color:${T[c.type] || 'var(--line)'}"><b>${esc(c.type)}</b>${esc(c.claim)}</div>`);
+  } else if (p.water_eligible) h += '<h4>Вода</h4><p class="muted small">Абзац ещё не проверен — кнопка «Проверить на воду» в итогах.</p>';
+  $('detail').innerHTML = h;
+}
+function jump(i) { $('p' + i).scrollIntoView({behavior: 'smooth', block: 'center'}); showCard(i) }
+
+// ---------- справка и выбор документа ----------
+function openHelp(anchor) {
+  $('overlay').classList.add('on'); $('help').classList.add('on');
+  if (anchor) setTimeout(() => $(anchor).scrollIntoView({behavior: 'smooth'}), 150);
+}
+async function openPicker() {
+  $('pickerCorpus').textContent = '«' + $('corpus').value + '»';
+  docs = await api('/api/corpora/' + encodeURIComponent($('corpus').value) + '/documents');
+  $('search').value = ''; listDocs();
+  $('overlay').classList.add('on'); $('picker').classList.add('on'); $('search').focus();
+}
+function listDocs() {
+  const q = $('search').value.toLowerCase();
+  let h = '', last = null;
+  docs.filter(d => (d.title || d.name).toLowerCase().includes(q)).forEach(d => {
+    if (d.area !== last) { h += `<h5>${esc(d.area || 'без темы')}</h5>`; last = d.area }
+    h += `<div class="item" onclick="openDoc(${d.id})">${esc(d.title || d.name)} <span class="muted small">${d.year || ''}${d.area_source === 'auto' ? ' · тема определена автоматически' : ''}</span></div>`;
+  });
+  $('pickerList').innerHTML = h || '<p class="muted">Ничего не найдено</p>';
+}
+$('search').oninput = listDocs;
+function closeAll() { ['overlay', 'help', 'picker'].forEach(id => $(id).classList.remove('on')) }
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeAll() });
+
+// ссылка на разбор документа корпуса: article.html?corpus=…&doc=ID[&scope=…][&para=N][&mode=sim|rep|verb]
+async function init() {
+  await loadCorpora();
+  const q = new URLSearchParams(location.search);
+  if (q.get('corpus')) { $('corpus').value = q.get('corpus'); showCorpus() }
+  if (q.get('scope')) document.querySelector(`input[name=scope][value=${q.get('scope')}]`).checked = true;
+  if (q.get('time')) document.querySelector(`input[name=time][value=${q.get('time')}]`).checked = true;
+  if (q.get('mode')) mode = q.get('mode');
+  if (q.get('doc')) await openDoc(q.get('doc'));
+  if (q.get('para') && R) showCard(+q.get('para'));
+  if (q.get('help')) openHelp();
+}
+init().catch(e => status('Нет связи с сервером: ' + e.message, true));
+pollWater();
+</script>
+</body>
+</html>

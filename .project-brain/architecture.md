@@ -1,5 +1,5 @@
 # Architecture — Book Analyzer
-_Last updated: 2026-06-28 (session 013)_
+_Last updated: 2026-10-17 (session 014)_
 
 ## What this system does
 Parses PDF/DOCX/TXT books into structured XML: extracts Table of Contents and slices each section's
@@ -319,6 +319,86 @@ are invoked SEQUENTIALLY (GPU ≤90%). `_llm_from_text_retry` retries up to 3× 
 
 ---
 
+---
+
+## ЭТАП 2 — семантический анализ (ветка `semantic-analysis`, plan_001, ADR 004)
+
+```
+[статья PDF] → article_parser.parse_article_pdf → dict{meta, sections, paragraphs, warnings}
+                                   │                     │
+                         to_xml_nodes → xml_builder      └→ app/analysis/* (слой анализа)
+                         (тот же XML, что у книг)              ├─ lexical.py  — шинглы: повторы, самоцит.
+                                                               └─ (план) эмбеддинги, утверждения, роли
+[книга] → этап 1 → XML ────────────────────────────────────────┘ (план: книги как корпус)
+```
+
+### article_parser.py (session 014)
+- **What:** парсер ОДИНОЧНОЙ статьи без оглавления. Структура восстанавливается по вёрстке
+  (PyMuPDF spans), без моделей и без поиска заголовков по тексту (заголовки уже на своих местах).
+- **Non-obvious:**
+  - Строки одной высоты склеиваются (выключка по ширине дробит строку на слова); пробел между
+    спанами — только при реальном зазоре (иначе «В ВЕДЕНИЕ» из капители).
+  - Отступ первой строки — ОТНОСИТЕЛЬНО соседних строк (висячий отступ списка не дробит абзацы).
+  - Абзац рвётся перед якорными словами (Резюме/Ключевые слова/Для цитирования/…), при смене
+    кириллица↔латиница (англ. дубли названия) и при смене «таблица/текст».
+  - Заголовок = стиль (жирный/крупнее/КАПС) + правдоподобие (не подпись, не пункт списка, не
+    жирное предложение) + за ним идёт текст ≥100 симв. (отсекает ячейки таблиц). Заголовок в
+    начале абзаца — жирный или КУРСИВ, либо словарь «Введение./Выводы./…».
+  - Мелкий кегль (<0.75 основного) убирается только из ТЕЛА (в шапке аннотация бывает 7–8pt).
+  - Несколько статей в одном файле (журнальная выгрузка): разрез по русским «Ключевые слова»,
+    выбор по совпадению названия с именем файла, иначе самая длинная; чужое — warning.
+  - Литература: новый пункт только при номере = предыдущий+1 и том же стиле («[n]»/«n.»).
+- Пороги — константы в начале модуля, подобраны на 5 статьях (articles/).
+
+### article_parser.py — режим «старый журнал» (session 015)
+- Нет «Ключевых слов» → опора на НАЗВАНИЕ: выделенный кириллический абзац рядом со строкой
+  авторов (`_title_candidates`, `_find_title_idx`); назад по УДК/авторам (`_header_start`) —
+  всё раньше = хвост предыдущей статьи; ещё одно «авторы + НАЗВАНИЕ (КАПС/крупнее)» дальше =
+  следующая статья журнала. Литература без заголовка — `_unlabeled_refs_start`.
+- `_repair_text`: cp1251-как-latin-1 по участкам, разрядка. Скан (<200 симв./стр.) → needs_ocr.
+
+### app/analysis/semantic.py (session 015)
+- Фрагменты 300–1500 симв. (`make_chunks`); `Embedder` — LM Studio /v1/embeddings, батч 32,
+  дисковый кэш `.cache/embeddings.jsonl` (sha1(model+text)), httpx `trust_env=False`.
+- coverage(A→B), novelty leave-one-out, redundant_pairs (несоседние, без аннотации/формул,
+  порог 0.82). Формульный фрагмент = доля кирилл./лат. букв < 0.70.
+- Новизна относительна корпусу — без близких соседей завышается (нужна пометка «нет опоры»).
+
+### app/analysis/claims.py (session 017)
+- Уровень утверждений через qwen3.6-35b-a3b (LM Studio). Рассуждение выключается ТОЛЬКО закрытым
+  `<think></think>` в шаблоне ChatML через `/v1/completions` (штатные параметры LM Studio не
+  передаёт). Кэш `.cache/llm_claims.jsonl`, temperature 0 (детерминированно).
+- extract_claims (результат/факт/общее/связка) → claim_profile (плотность содержательных на 1000
+  знаков, доля общих) — детектор «воды»; match_claims — построчный формат «A1 -> B3 да»,
+  отсутствующая строка = «не оценено».
+- Методика и формулы всех метрик — `docs/semantic_methods.md`.
+
+### Сервис анализа статей (session 020, ADR 005)
+```
+PDF ─→ article_parser ─→ make_chunks(+paras) ─→ Embedder ─┐
+                                                          ├→ article_report.analyze_article
+data/corpus.db (CorpusStore): corpus ─< document(area) ─< chunk(emb) ─→ index (numpy)
+      predict_area (kNN по размеченным всех корпусов) → neighbours (scope topic|nearest|corpus)
+article_report → {area, neighbours, paragraphs[sim, novelty, support, nearest, repeats, verbatim],
+                  sections[агрегаты], summary} → app/article_api.py (/api/...) → static/article.html
+```
+- `app/analysis/corpus.py` — хранилище/индекс; `app/analysis/article_report.py` — разбор по абзацам;
+  `app/article_api.py` — /api/corpora, /api/corpora/{name}/documents, /api/areas,
+  POST /api/article/analyze, GET /api/corpus-document/{id}; страница `/article.html`.
+- Метрики по фрагментам → показываются по абзацам; опора SUPPORT_SIM=0.56 (калибровка session 020).
+- Парсер: двухколоночная вёрстка (`_find_gutter`, `_column_order`), аннотация после литературы.
+- DOCX: `app/services/article_docx.py` (стили заголовков → разделы) — тот же формат, что PDF (s021).
+- Вода (s023): `app/analysis/water.py` WaterJob — фоновый поток, lms CLI меняет модели (unload all → qwen3.6 → эмбеддер),
+  результаты в `para_claims` (sha1 текста); `article_report` подмешивает профили и считает новизну по содержательным абзацам.
+- Разметка (s023): `app/analysis/labels.py` (label_item/label), `static/label.html`, /api/label/*.
+
+### app/analysis/lexical.py (session 014)
+- Шинглы по 5 «основ» (первые 6 букв), containment между абзацами (асимметричный) → почти
+  дословные повторы внутри статьи и между статьями; доля текста, повторённого в корпусе;
+  самоцитирование (фамилии авторов в литературе). Пересказ НЕ ловит — это задача эмбеддингов.
+
+---
+
 ## Data flow (primary use case: neural PDF)
 
 1. `POST /upload` → saves to temp file, returns `temp_id`
@@ -444,3 +524,10 @@ _Append only. Never delete entries._
 | 2026-06-27 | 011 | page_cut: stagger same-page sections (fix B) | Same-page page_cut got identical slice window → byte-identical duplicate content; dups 50→4 |
 | 2026-06-27 | 012 | `_pick_body_source` — pick body text by comparing candidates, not readability flag | ToC-OCR overrode full readable body on OCR-escalated docs; digital-design 24→97, systemic |
 | 2026-06-28 | 013 | `footer_junk_lines`/`strip_junk_lines`; per-page watermark strip from CONTENT (decoupled); 0.60 page-fraction | «Библиотека БГУИР» (787×) polluted content; full_text-strip churned page_cut; 0.30 deleted real content |
+| 2026-10-17 | 014 | ЭТАП 2: `article_parser.py` (статья без оглавления, по вёрстке) + `app/analysis/lexical.py` | Новая задача — семантический анализ статей (ADR 004); статьи грузятся поодиночке |
+| 2026-10-17 | 015 | article_parser: режим «старый журнал» (опора на название); `app/analysis/semantic.py` (эмбеддинги); numpy | 18/20 статей КиберЛенинки ломали шапку; пересказ не ловится шинглами |
+| 2026-10-17 | 016–017 | язык статьи, литература без номеров; `app/analysis/claims.py` (LLM-утверждения); docs/semantic_methods.md | статьи КИМ; «вода» не ловится эмбеддингами |
+| 2026-10-18 | 020 | Сервис статей: CorpusStore (SQLite), article_report, article_api, static/article.html; парсер — колонки и аннотация в конце | Переход от скриптов к сервису; ADR 005 |
+| 2026-10-18 | 021 | article_docx.py; страница сервиса переделана; оглавления/списки в парсере статей | Удобство для пользователя, курсовые/ВКР на входе |
+| 2026-10-18 | 023 | water.py (фоновая проверка воды), labels.py + label.html, document.journal | Вода в сервисе, калибровка разметкой |
+| 2026-10-18 | 024 | Колонки: серия разделённых строк; _INLINE_HYPHEN; water.not_prose; corpus_build --reparse | Перемешанные колонки на 1-й странице (разметка user) |
