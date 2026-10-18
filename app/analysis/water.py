@@ -64,6 +64,17 @@ def lookup(db, texts: list) -> dict:
     return out
 
 
+def _keep_awake(on: bool):
+    """Запрет спящего режима Windows на время проверки (экран гаснуть может): ночью прогон
+    простоял 8.5 ч, пока компьютер спал (s023). Действует только пока жив процесс."""
+    try:
+        import ctypes
+        ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
+        ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS | (ES_SYSTEM_REQUIRED if on else 0))
+    except Exception:                                      # noqa: BLE001 — не Windows
+        pass
+
+
 def _lms(*args, timeout=600) -> str:
     r = subprocess.run([LMS, *args], capture_output=True, text=True, encoding='utf-8',
                        errors='replace', timeout=timeout)
@@ -132,6 +143,7 @@ class WaterJob:
     def _run(self, todo: list):
         llm = C.ClaimsLLM()
         db = sqlite3.connect(self.store.path, timeout=30)    # своё соединение для фонового потока
+        _keep_awake(True)
         try:
             self.state['phase'] = 'loading'
             if C.LLM_MODEL not in _lms('ps'):
@@ -153,6 +165,7 @@ class WaterJob:
         except Exception as e:                             # noqa: BLE001 — показать на странице
             self.state['error'] = str(e)
         finally:
+            _keep_awake(False)
             self.state['phase'] = 'restoring'
             try:
                 _lms('unload', '--all')
