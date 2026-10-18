@@ -40,7 +40,10 @@ def _para_list(parsed: dict) -> list:
 
 
 def analyze_article(parsed: dict, store: CorpusStore, corpus: str, scope: str = 'topic',
-                    area: str = None, exclude: int = None) -> dict:
+                    area: str = None, exclude: int = None, year: int = None, time_mode: str = 'before',
+                    include_undated: bool = True) -> dict:
+    """year — год работы; time_mode='before' — сравнивать только с работами того же года и раньше
+    (по умолчанию [user, s025]), 'all' — со всеми. Документы без года — по include_undated."""
     chunks = make_chunks(parsed)
     M = store.embedder.embed([c['text'] for c in chunks]) if chunks else np.zeros((0, 1024), np.float32)
     keep = [i for i, c in enumerate(chunks) if not c['formula']]
@@ -50,7 +53,13 @@ def analyze_article(parsed: dict, store: CorpusStore, corpus: str, scope: str = 
     area_info = ({'area': area, 'source': 'указана', 'confidence': 1.0, 'votes': pred['votes']}
                  if area else {'area': pred['area'], 'source': 'авто', 'confidence': pred['confidence'],
                                'votes': pred['votes']})
-    neigh = store.neighbours(corpus, Mk, area=area_info['area'], scope=scope, exclude=exclude)
+    year_max = year if (time_mode == 'before' and year) else None
+    neigh = store.neighbours(corpus, Mk, area=area_info['area'], scope=scope, exclude=exclude,
+                             year_max=year_max, include_undated=include_undated)
+    pool = [d for d in store.index(corpus)['docs'].values() if d['id'] != exclude]
+    time_info = {'mode': time_mode if year_max else 'all', 'year': year, 'include_undated': include_undated,
+                 'excluded_later': sum(1 for d in pool if year_max and d['year'] and d['year'] > year_max),
+                 'undated': sum(1 for d in pool if d['year'] is None)}
 
     # --- фрагменты против соседей ---
     ref_vecs, ref_meta = [], []
@@ -172,7 +181,7 @@ def analyze_article(parsed: dict, store: CorpusStore, corpus: str, scope: str = 
                  'abstract': meta.get('abstract', ''), 'keywords': meta.get('keywords', []),
                  'references': len(meta.get('references', [])), 'lang': parsed.get('lang', 'ru'),
                  'needs_ocr': parsed.get('needs_ocr', False), 'warnings': parsed.get('warnings', [])},
-        'corpus': corpus, 'scope': scope, 'area': area_info,
+        'corpus': corpus, 'scope': scope, 'area': area_info, 'time': time_info,
         'neighbours': [{'doc_id': d['id'], 'title': d['title'], 'area': d['area'], 'year': d['year'],
                         'url': d['url'], 'coverage': round(c, 3)} for d, c in neigh],
         'summary': {**agg(out_paras), 'self_citation': round(self_citation_share(parsed), 3),

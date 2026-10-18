@@ -1,7 +1,7 @@
 {
   "project": "book-analyzer",
   "updated": "2026-10-18",
-  "session": 24,
+  "session": 25,
   "branch": "semantic-analysis",
   "stack": [
     "python3.11",
@@ -12,7 +12,7 @@
   ],
   "status": "active",
   "stage": "2 — semantic analysis (plan_001, adr_004)",
-  "session_intent_last": "user water labels; column fix on first pages; non-prose filter",
+  "session_intent_last": "novelty: time filter + open questions",
   "open_bugs": [],
   "open_tasks": [
     {
@@ -62,7 +62,7 @@
     }
   ],
   "pending_verification": [],
-  "last_change": "parser: column runs + inline hyphen; water.not_prose; corpus_build --reparse; 322 docs re-parsed",
+  "last_change": "time filter (year_max, include_undated) in neighbours/report/API/UI",
   "key_files": {
     "app/services/article_parser.py": "single-article parser (layout-based, no models)",
     "app/analysis/lexical.py": "near-verbatim reuse (shingles), self-citation",

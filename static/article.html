@@ -180,6 +180,15 @@ details.warn summary{cursor:pointer;color:var(--c-close)}
             <span>Все статьи сразу. Имеет смысл, если корпус маленький и целиком по теме.</span></div></label>
         </div></div>
       <div class="field"><label for="area">Тема работы</label><select id="area"><option value="">Определить автоматически</option></select></div>
+      <div class="field"><label>С какими работами по времени</label>
+        <div class="options">
+          <label class="opt"><input type="radio" name="time" value="before" checked><div><b>Вышедшими не позже работы <span class="chip">рекомендуется</span></b>
+            <span>Свежая работа сравнивается с тем, что было написано до неё (того же года и раньше): более поздние работы могли пересказать её саму.</span></div></label>
+          <label class="opt"><input type="radio" name="time" value="all"><div><b>Со всеми</b>
+            <span>Год не учитывается.</span></div></label>
+        </div>
+        <label class="small ink2" style="display:flex;gap:8px;margin-top:8px"><input type="checkbox" id="undated" checked>
+          Учитывать документы без известного года (часть статей и студенческие работы)</label></div>
     </div>
     <div class="step">
       <h2><span class="num">2</span>Что проверяем</h2>
@@ -187,6 +196,9 @@ details.warn summary{cursor:pointer;color:var(--c-close)}
       <label class="drop" id="drop"><input type="file" id="file" accept=".pdf,.docx" hidden>
         <b>Перетащите файл сюда или нажмите, чтобы выбрать</b><span class="small muted">PDF или DOCX</span>
         <div class="file" id="fileName"></div></label>
+      <label class="small ink2" style="display:flex;gap:8px;align-items:center;margin-top:12px">Год работы
+        <input type="number" id="year" min="1950" max="2100" style="width:90px;padding:5px 8px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--ink)">
+        <span class="muted">— по умолчанию текущий</span></label>
       <label class="small ink2" style="display:flex;gap:8px;margin-top:12px"><input type="checkbox" id="add">
         Сохранить работу в выбранный корпус после проверки (с ней будут сравниваться следующие)</label>
       <div class="row"><button class="btn" id="go" disabled>Проверить</button><span class="status" id="status"></span></div>
@@ -286,6 +298,9 @@ async function api(url, opts) {
   return r.json();
 }
 const scope = () => document.querySelector('input[name=scope]:checked').value;
+const timeMode = () => document.querySelector('input[name=time]:checked').value;
+$('year').value = new Date().getFullYear();
+const timeQS = () => `&time_mode=${timeMode()}&include_undated=${$('undated').checked}`;
 const SCOPE_TEXT = {topic: 'статьи той же темы', nearest: 'самые близкие статьи', corpus: 'весь корпус'};
 
 // ---------- категории похожести ----------
@@ -345,12 +360,14 @@ $('go').onclick = async () => {
   const fd = new FormData();
   fd.append('file', file); fd.append('corpus', $('corpus').value); fd.append('scope', scope());
   fd.append('area', $('area').value); fd.append('add', $('add').checked);
+  fd.append('year', $('year').value || new Date().getFullYear()); fd.append('time_mode', timeMode());
+  fd.append('include_undated', $('undated').checked);
   await run(() => api('/api/article/analyze', {method: 'POST', body: fd}), 'Разбираем документ и ищем похожие места… обычно 5–30 секунд');
   if ($('add').checked) loadCorpora();
 };
 async function openDoc(id) {
   closeAll();
-  await run(() => api(`/api/corpus-document/${id}?corpus=${encodeURIComponent($('corpus').value)}&scope=${scope()}`), 'Ищем похожие места…');
+  await run(() => api(`/api/corpus-document/${id}?corpus=${encodeURIComponent($('corpus').value)}&scope=${scope()}${timeQS()}`), 'Ищем похожие места…');
 }
 async function run(fn, msg) {
   $('go').disabled = true; status(msg, false, true);
@@ -369,7 +386,11 @@ function editSetup() { $('setup').hidden = false; $('result').hidden = true; win
 function render() {
   const m = R.meta, s = R.summary, a = R.area;
   document.querySelectorAll('.thr').forEach(e => e.textContent = num(R.thresholds.support_sim));
-  $('setupBar').innerHTML = `<span>Корпус <b>«${esc(R.corpus)}»</b> · ${SCOPE_TEXT[R.scope]} · ${R.neighbours.length} статей для сравнения</span>
+  const T = R.time || {};
+  const timeTxt = T.mode === 'before'
+    ? `работы ${T.year} г. и раньше${T.excluded_later ? ` (более поздних отсечено: ${T.excluded_later})` : ''}${T.include_undated ? '' : ', без документов без года'}`
+    : (T.year ? 'все работы, без учёта года' : 'все работы (год этой работы неизвестен)');
+  $('setupBar').innerHTML = `<span>Корпус <b>«${esc(R.corpus)}»</b> · ${SCOPE_TEXT[R.scope]} · ${timeTxt} · ${R.neighbours.length} статей для сравнения</span>
     <button class="btn ghost" onclick="editSetup()">Изменить настройки или проверить другой файл</button>`;
 
   const votes = Object.entries(a.votes || {}).map(([k, v]) => `${esc(k)} ${pct(v)}`).join(', ');
@@ -597,6 +618,7 @@ async function init() {
   const q = new URLSearchParams(location.search);
   if (q.get('corpus')) { $('corpus').value = q.get('corpus'); showCorpus() }
   if (q.get('scope')) document.querySelector(`input[name=scope][value=${q.get('scope')}]`).checked = true;
+  if (q.get('time')) document.querySelector(`input[name=time][value=${q.get('time')}]`).checked = true;
   if (q.get('mode')) mode = q.get('mode');
   if (q.get('doc')) await openDoc(q.get('doc'));
   if (q.get('para') && R) showCard(+q.get('para'));

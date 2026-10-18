@@ -86,3 +86,17 @@ def test_exclude_self(store):
     parsed = json.loads(store.db.execute('SELECT parsed FROM document WHERE id=?', (d['id'],)).fetchone()[0])
     rep = analyze_article(parsed, store, 'cl', exclude=d['id'])
     assert d['id'] not in [n['doc_id'] for n in rep['neighbours']]
+
+
+def test_year_filter(store):
+    import json as _json
+    for k, y in enumerate((2010, 2020, None)):
+        store.add_document('cl', f'y{k}', doc(f'Год {y}', MATH * 3, MATH * 2), area='Математика', meta={'year': y})
+    M = BagEmbedder().embed([MATH * 3])
+    years = lambda **kw: sorted(str(d['year']) for d, _ in store.neighbours('cl', M, scope='corpus', **kw) if d['name'].startswith('y'))
+    assert years(year_max=2015) == ['2010', 'None']
+    assert years(year_max=2015, include_undated=False) == ['2010']
+    assert years() == ['2010', '2020', 'None']
+    rep = analyze_article(doc('Новая', MATH * 3), store, 'cl', year=2015)
+    assert rep['time']['mode'] == 'before' and rep['time']['excluded_later'] >= 1
+    assert analyze_article(doc('Новая', MATH * 3), store, 'cl', year=2015, time_mode='all')['time']['mode'] == 'all'

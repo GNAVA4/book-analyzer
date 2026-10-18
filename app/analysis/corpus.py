@@ -200,13 +200,19 @@ class CorpusStore:
                 'votes': {a: round(v / total, 3) for a, v in sorted(votes.items(), key=lambda x: -x[1])}}
 
     def neighbours(self, corpus: str, Mk: np.ndarray, area: str = None, scope: str = 'topic',
-                   k: int = NEIGHBOURS, exclude: int = None) -> list:
+                   k: int = NEIGHBOURS, exclude: int = None, year_max: int = None,
+                   include_undated: bool = True) -> list:
         """Документы корпуса для сравнения.
         scope='topic'   — только документы той же темы, из них k ближайших;
         scope='nearest' — k ближайших по всему корпусу (тема не учитывается);
         scope='corpus'  — весь корпус.
+        year_max — только работы, вышедшие не позже этого года [user, s025: «свежая работа
+        сравнивается с работами до неё»]; документы без года — по include_undated.
         Ближайшие — по coverage(статья → документ) среди PREFILTER лучших по центроиду."""
         docs = [d for d in self.index(corpus)['docs'].values() if len(d['Mk']) and d['id'] != exclude]
+        if year_max is not None:
+            docs = [d for d in docs if (d['year'] is None and include_undated)
+                    or (d['year'] is not None and d['year'] <= year_max)]
         if scope == 'topic' and area:
             docs = [d for d in docs if d['area'] == area]
         if scope == 'corpus' or not len(Mk):
